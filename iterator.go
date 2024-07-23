@@ -4,14 +4,14 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"io"
+	go_iterators "github.com/lezhnev74/go-iterators"
 	"slices"
 )
 
 // ReaderCache is used to re-fetch fresh values from i-th reader
 // after the original value was pending
 type ReaderCache struct {
-	r       Iterator
+	r       go_iterators.Iterator[TermValues]
 	tv      TermValues
 	pending bool
 }
@@ -39,7 +39,7 @@ func (mi *MergingIterator) Next() (mergedTv TermValues, err error) {
 	}
 
 	if len(mi.buf) == 0 {
-		err = io.EOF
+		err = go_iterators.EmptyIterator
 		return
 	}
 
@@ -97,7 +97,7 @@ func (mi *MergingIterator) fetch() (err error) {
 			i++
 			continue
 		}
-		if errors.Is(err, io.EOF) {
+		if errors.Is(err, go_iterators.EmptyIterator) {
 			// exhausted normally
 			err = rc.r.Close()
 			mi.buf[j].r = nil // gc
@@ -109,7 +109,7 @@ func (mi *MergingIterator) fetch() (err error) {
 	return nil
 }
 
-func NewMergingIterator(readers []Iterator) *MergingIterator {
+func NewMergingIterator(readers []go_iterators.Iterator[TermValues]) *MergingIterator {
 	buf := make([]ReaderCache, 0, len(readers))
 	for _, r := range readers {
 		buf = append(buf, ReaderCache{r: r, pending: true})

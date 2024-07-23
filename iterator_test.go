@@ -42,7 +42,7 @@ func TestMergingIterator(t *testing.T) {
 	}
 
 	// 2. Open readers for each file
-	readers := make([]Iterator, 0, len(input))
+	readers := make([]go_iterators.Iterator[TermValues], 0, len(input))
 	for _, tvs := range input {
 		r := go_iterators.NewSliceIterator(tvs)
 		readers = append(readers, r)
