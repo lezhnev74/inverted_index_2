@@ -1,4 +1,4 @@
-package inverted_index_2
+package file
 
 import (
 	"encoding/binary"
@@ -53,8 +53,14 @@ func (r *Reader) Next() (TermValues, error) {
 	}
 
 	tv := TermValues{term, []uint64{}}
-	compressed := make([]uint64, runSize/8)
 
+	if r.valuesFile == nil {
+		// direct mode
+		tv.Values = []uint64{valuesOffset}
+		return tv, nil
+	}
+
+	compressed := make([]uint64, runSize/8)
 	_, err := r.valuesFile.Seek(int64(valuesOffset), io.SeekStart)
 	if err != nil {
 		return tv, fmt.Errorf("reader: values file: %w", err)
@@ -73,7 +79,11 @@ func (r *Reader) Next() (TermValues, error) {
 func (r *Reader) Close() error {
 	err0 := r.fstIterator.Close()
 	err1 := r.fst.Close()
-	err2 := r.valuesFile.Close()
+
+	var err2 error
+	if r.valuesFile != nil {
+		err2 = r.valuesFile.Close()
+	}
 
 	if err0 != nil {
 		return err0
@@ -104,20 +114,25 @@ func NewReader(dir string, key string) (*Reader, error) {
 	// here we can switch to "no-values" file where all FST terms contains the same single value
 	// that is for the use-case where we ingest one segment's terms.
 	valuesFilename := path.Join(dir, key+"_val")
+	valuesFileSize := uint64(0)
 	valuesFile, err := os.Open(valuesFilename)
-	if err != nil {
-		return nil, fmt.Errorf("reader: value file: %w", err)
-	}
-	fInfo, err := valuesFile.Stat()
-	if err != nil {
-		return nil, fmt.Errorf("reader: value file: %w", err)
+	if !errors.Is(err, os.ErrNotExist) {
+		// direct mode enabled if no values file found
+		if err != nil {
+			return nil, fmt.Errorf("reader: value file: %w", err)
+		}
+		fInfo, err := valuesFile.Stat()
+		if err != nil {
+			return nil, fmt.Errorf("reader: value file: %w", err)
+		}
+		valuesFileSize = uint64(fInfo.Size())
 	}
 
 	r := &Reader{
 		fst:            fst,
 		fstIterator:    fstIterator,
 		valuesFile:     valuesFile,
-		valuesFileSize: uint64(fInfo.Size()),
+		valuesFileSize: valuesFileSize,
 		prevTerm:       append([]byte{}, firstTerm...), // copy from FST internal buffer
 		prevOffset:     firstOffset,
 	}

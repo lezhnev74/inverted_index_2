@@ -1,4 +1,4 @@
-package inverted_index_2
+package file
 
 import "os"
 

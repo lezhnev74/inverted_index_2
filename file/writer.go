@@ -1,4 +1,4 @@
-package inverted_index_2
+package file
 
 import (
 	"encoding/binary"
@@ -26,6 +26,14 @@ type Writer struct {
 // terms must be sorted prior to the call.
 func (w *Writer) Append(tv TermValues) (err error) {
 
+	if w.valuesFile == nil { // direct mode
+		err = w.fst.Insert(tv.Term, tv.Values[0])
+		if err != nil {
+			return fmt.Errorf("writer: fst insert: %w", err)
+		}
+		return nil
+	}
+
 	// Put the new offset to FST
 	err = w.fst.Insert(tv.Term, w.valuesOffset)
 	if err != nil {
@@ -47,7 +55,11 @@ func (w *Writer) Append(tv TermValues) (err error) {
 
 func (w *Writer) Close() error {
 	err1 := w.fst.Close() // terms file is closed transitively (todo hopefully)
-	err2 := w.valuesFile.Close()
+
+	var err2 error
+	if w.valuesFile != nil { // direct mode
+		err2 = w.valuesFile.Close()
+	}
 
 	if err1 != nil {
 		return err1
@@ -59,13 +71,10 @@ func (w *Writer) GetName() string {
 	return w.name
 }
 
-func NewWriter(dir string) (w *Writer, err error) {
+// NewDirectWriter creates a single-file writer (only FST).
+// Each term contains just a single segment value.
+func NewDirectWriter(dir string) (w *Writer, err error) {
 	key := fmt.Sprint(time.Now().UnixNano())
-
-	valuesFile, err := os.Create(path.Join(dir, key+"_val"))
-	if err != nil {
-		return nil, fmt.Errorf("writer: values file: %w", err)
-	}
 
 	termFile, err := os.Create(path.Join(dir, key+"_fst"))
 	if err != nil {
@@ -78,8 +87,25 @@ func NewWriter(dir string) (w *Writer, err error) {
 	}
 
 	return &Writer{
-		name:       key,
-		fst:        fst,
-		valuesFile: valuesFile,
+		name: key,
+		fst:  fst,
 	}, nil
+}
+
+// NewWriter extends direct writer with a secondary value file.
+// In this case FST contains value offsets in the file.
+func NewWriter(dir string) (w *Writer, err error) {
+	w, err = NewDirectWriter(dir)
+	if err != nil {
+		return
+	}
+	key := w.GetName()
+
+	valuesFile, err := os.Create(path.Join(dir, key+"_val"))
+	if err != nil {
+		return nil, fmt.Errorf("writer: values file: %w", err)
+	}
+	w.valuesFile = valuesFile
+
+	return
 }

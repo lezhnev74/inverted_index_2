@@ -1,4 +1,4 @@
-package inverted_index_2
+package file
 
 // TermValues contain postings for the term (could be doc ids, offsets or whatever)
 type TermValues struct {
