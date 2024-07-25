@@ -16,7 +16,7 @@ func TestWriter(t *testing.T) {
 		{[]byte("term3"), []uint64{66, 5513}},
 	}
 
-	d := makeTmpDir()
+	d := MakeTmpDir()
 	defer os.RemoveAll(d)
 
 	// Write data
@@ -54,7 +54,7 @@ func TestWriterDirect(t *testing.T) {
 		{[]byte("term2"), []uint64{11}},
 	}
 
-	d := makeTmpDir()
+	d := MakeTmpDir()
 	defer os.RemoveAll(d)
 
 	// Write data
@@ -81,4 +81,12 @@ func TestWriterDirect(t *testing.T) {
 	require.NoError(t, r.Close())
 
 	require.Equal(t, input, actual)
+}
+
+func MakeTmpDir() string {
+	dir, err := os.MkdirTemp("", "")
+	if err != nil {
+		panic(err)
+	}
+	return dir
 }

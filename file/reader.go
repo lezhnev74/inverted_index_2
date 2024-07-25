@@ -5,12 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"github.com/blevesearch/vellum"
+	go_iterators "github.com/lezhnev74/go-iterators"
 	"github.com/ronanh/intcomp"
 	"io"
 	"os"
 	"path"
 )
 
+// Reader reads terms and their values from underlying filesystem.
+// It implements Iterator and can be combined with other iterators for efficient reading.
 type Reader struct {
 	fst            *vellum.FST
 	valuesFile     *os.File
@@ -29,7 +32,7 @@ func (r *Reader) Next() (TermValues, error) {
 
 	// check the result of the last execution:
 	if errors.Is(r.prevFstError, vellum.ErrIteratorDone) {
-		return TermValues{}, io.EOF
+		return TermValues{}, go_iterators.EmptyIterator
 	}
 
 	term, valuesOffset := r.prevTerm, r.prevOffset
