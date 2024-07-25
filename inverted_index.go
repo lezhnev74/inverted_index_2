@@ -9,6 +9,10 @@ import (
 	"time"
 )
 
+// I want to reuse FST builder for merging/inserting segments.
+// Allocate a pool of builder and only use those.
+// Evict on my own rules.
+
 // InvertedIndex manages all index segments, allows concurrent operations.
 type InvertedIndex struct {
 	segments Segments
