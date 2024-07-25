@@ -43,10 +43,16 @@ func (p *Pool[T]) Put(r T) {
 }
 
 func (p *Pool[T]) monitor() {
+	t := time.NewTicker(p.maxAge)
 	for {
+		select {
+		case <-t.C:
+		}
+
 		p.m.Lock()
-		if p.list == nil {
+		if p.list == nil { // stop monitor (see Close())
 			p.m.Unlock()
+			t.Stop()
 			break
 		}
 		x := 0

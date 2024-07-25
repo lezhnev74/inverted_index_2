@@ -24,6 +24,8 @@ type Writer struct {
 	valuesOffset uint64
 }
 
+func (w *Writer) GetFst() *vellum.Builder { return w.fst }
+
 // Append writes out bytes immediately to the sink files
 // terms must be sorted prior to the call.
 func (w *Writer) Append(tv TermValues) (err error) {
@@ -90,17 +92,21 @@ func (w *Writer) GetName() string {
 
 // NewDirectWriter creates a single-file writer (only FST).
 // Each term contains just a single segment value.
-func NewDirectWriter(dir string) (w *Writer, err error) {
+func NewDirectWriter(dir string, fst *vellum.Builder) (w *Writer, err error) {
 	key := fmt.Sprint(time.Now().UnixNano())
 
 	termFile, err := os.Create(path.Join(dir, key+"_fst_tmp"))
 	if err != nil {
-		return nil, fmt.Errorf("writer: fst file: %w", err)
+		return nil, fmt.Errorf("writer: terms file: %w", err)
 	}
 
-	fst, err := vellum.New(termFile, nil)
+	if fst == nil {
+		fst, err = vellum.New(termFile, nil)
+	} else {
+		err = fst.Reset(termFile)
+	}
 	if err != nil {
-		return nil, fmt.Errorf("writer: terms file: %w", err)
+		return nil, fmt.Errorf("writer: fst: %w", err)
 	}
 
 	return &Writer{
@@ -112,8 +118,8 @@ func NewDirectWriter(dir string) (w *Writer, err error) {
 
 // NewWriter extends direct writer with a secondary value file.
 // In this case FST contains value offsets in the file.
-func NewWriter(dir string) (w *Writer, err error) {
-	w, err = NewDirectWriter(dir)
+func NewWriter(dir string, fst *vellum.Builder) (w *Writer, err error) {
+	w, err = NewDirectWriter(dir, fst)
 	if err != nil {
 		return
 	}

@@ -1,27 +1,26 @@
 package inverted_index_2
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"github.com/blevesearch/vellum"
 	go_iterators "github.com/lezhnev74/go-iterators"
 	"inverted_index_2/file"
 	"runtime"
 	"time"
 )
 
-// I want to reuse FST builder for merging/inserting segments.
-// Allocate a pool of builder and only use those.
-// Evict on my own rules.
-
 // InvertedIndex manages all index segments, allows concurrent operations.
 type InvertedIndex struct {
 	segments Segments
 	basedir  string
+	fstPool  *Pool[*vellum.Builder]
 }
 
 // Put ingests one indexed document (all terms have the same value)
 func (ii *InvertedIndex) Put(terms [][]byte, val uint64) error {
-	w, err := file.NewWriter(ii.basedir)
+	w, err := file.NewWriter(ii.basedir, ii.fstPool.Get())
 	if err != nil {
 		return fmt.Errorf("ii: put: %w", err)
 	}
@@ -34,7 +33,15 @@ func (ii *InvertedIndex) Put(terms [][]byte, val uint64) error {
 		}
 	}
 
-	return w.Close()
+	err = w.Close()
+	if err != nil {
+		return fmt.Errorf("index put: %w", err)
+	}
+
+	// reuse FST
+	ii.fstPool.Put(w.GetFst())
+
+	return nil
 }
 
 // Read returns merging iterator for all available index segments.
@@ -83,7 +90,7 @@ func (ii *InvertedIndex) Merge(MinMerge, MaxMerge int) (mergedSegments int, err 
 		return 0, fmt.Errorf("ii: merge: %w", err)
 	}
 
-	w, err := file.NewWriter(ii.basedir)
+	w, err := file.NewWriter(ii.basedir, ii.fstPool.Get())
 	if err != nil {
 		return 0, fmt.Errorf("ii: merge: %w", err)
 	}
@@ -107,6 +114,10 @@ func (ii *InvertedIndex) Merge(MinMerge, MaxMerge int) (mergedSegments int, err 
 	if err != nil {
 		return 0, fmt.Errorf("ii: merge: writer close: %w", err)
 	}
+
+	// reuse FST
+	ii.fstPool.Put(w.GetFst())
+
 	err = it.Close()
 	if err != nil {
 		return 0, fmt.Errorf("ii: merge: iterator close: %w", err)
@@ -157,7 +168,18 @@ func (ii *InvertedIndex) makeIterator(segments []*Segment, min, max []byte) (go_
 }
 
 func NewInvertedIndex(basedir string) (*InvertedIndex, error) {
+
+	mockWriter := bytes.NewBuffer(nil)
+	pool := NewPool(
+		10*time.Second,
+		func() *vellum.Builder {
+			builder, _ := vellum.New(mockWriter, nil)
+			return builder
+		},
+	)
+
 	return &InvertedIndex{
 		basedir: basedir,
+		fstPool: pool,
 	}, nil
 }

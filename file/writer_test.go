@@ -20,7 +20,7 @@ func TestWriter(t *testing.T) {
 	defer os.RemoveAll(d)
 
 	// Write data
-	w, err := NewWriter(d)
+	w, err := NewWriter(d, nil)
 	require.NoError(t, err)
 	for _, tv := range input {
 		require.NoError(t, w.Append(tv))
@@ -58,7 +58,7 @@ func TestWriterDirect(t *testing.T) {
 	defer os.RemoveAll(d)
 
 	// Write data
-	w, err := NewDirectWriter(d)
+	w, err := NewDirectWriter(d, nil)
 	require.NoError(t, err)
 	for _, tv := range input {
 		require.NoError(t, w.Append(tv))
