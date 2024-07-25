@@ -59,7 +59,7 @@ func (ii *InvertedIndex) Read(min, max []byte) (go_iterators.Iterator[file.TermV
 func (ii *InvertedIndex) Merge(MinMerge, MaxMerge int) (mergedSegments int, err error) {
 	start := time.Now()
 	defer func() {
-		fmt.Printf("Merged in %fs\n", time.Now().Sub(start).Seconds())
+		fmt.Printf("Merged in %s\n", time.Now().Sub(start).String())
 	}()
 
 	// Select segments for merge

@@ -89,10 +89,10 @@ func TestMergePerformance(t *testing.T) {
 	i := uint64(0)
 	scanner := bufio.NewScanner(f)
 
-	terms := make([]string, 0, 10_000)
+	terms := make([]string, 0, 1000)
 	for scanner.Scan() {
-		terms = append(terms, scanner.Text()) // 10 terms per segment
-		if len(terms) == 10_000 {
+		terms = append(terms, scanner.Text())
+		if len(terms) == 1_000 {
 			slices.Sort(terms)
 			m.RunOne(IngestBulkCmd(map[uint64][]string{
 				i: terms,
