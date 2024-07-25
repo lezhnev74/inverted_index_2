@@ -2,6 +2,7 @@ package file
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"github.com/blevesearch/vellum"
 	"github.com/ronanh/intcomp"
@@ -13,6 +14,7 @@ import (
 // Writer accepts terms and their values and pushes them in 2 files:
 // terms file (fst) and values file (compressed ints).
 type Writer struct {
+	basedir    string
 	valuesFile *os.File
 	fst        *vellum.Builder
 	// name is the prefix for the filenames, used as a key for the inverted index segment
@@ -64,7 +66,22 @@ func (w *Writer) Close() error {
 	if err1 != nil {
 		return err1
 	}
-	return err2
+
+	if err2 != nil {
+		return err2
+	}
+
+	// rename files to make them visible for readers
+	os.Rename(
+		path.Join(w.basedir, w.name+"_fst_tmp"),
+		path.Join(w.basedir, w.name+"_fst"),
+	)
+	os.Rename(
+		path.Join(w.basedir, w.name+"_val_tmp"),
+		path.Join(w.basedir, w.name+"_val"),
+	)
+
+	return nil
 }
 
 func (w *Writer) GetName() string {
@@ -76,7 +93,7 @@ func (w *Writer) GetName() string {
 func NewDirectWriter(dir string) (w *Writer, err error) {
 	key := fmt.Sprint(time.Now().UnixNano())
 
-	termFile, err := os.Create(path.Join(dir, key+"_fst"))
+	termFile, err := os.Create(path.Join(dir, key+"_fst_tmp"))
 	if err != nil {
 		return nil, fmt.Errorf("writer: fst file: %w", err)
 	}
@@ -87,8 +104,9 @@ func NewDirectWriter(dir string) (w *Writer, err error) {
 	}
 
 	return &Writer{
-		name: key,
-		fst:  fst,
+		basedir: dir,
+		name:    key,
+		fst:     fst,
 	}, nil
 }
 
@@ -101,11 +119,21 @@ func NewWriter(dir string) (w *Writer, err error) {
 	}
 	key := w.GetName()
 
-	valuesFile, err := os.Create(path.Join(dir, key+"_val"))
+	valuesFile, err := os.Create(path.Join(dir, key+"_val_tmp"))
 	if err != nil {
 		return nil, fmt.Errorf("writer: values file: %w", err)
 	}
 	w.valuesFile = valuesFile
 
 	return
+}
+
+// RemoveSegment unlinks all associated files for the given segment key
+func RemoveSegment(dir, key string) error {
+	err1 := os.Remove(path.Join(dir, key+"_fst"))
+	err2 := os.Remove(path.Join(dir, key+"_val"))
+	if !errors.Is(err1, os.ErrNotExist) {
+		return err1
+	}
+	return err2
 }

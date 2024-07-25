@@ -1,9 +1,11 @@
 package inverted_index_2
 
 import (
+	"errors"
 	"fmt"
 	go_iterators "github.com/lezhnev74/go-iterators"
 	"inverted_index_2/file"
+	"runtime"
 )
 
 // InvertedIndex manages all index segments, allows concurrent operations.
@@ -19,7 +21,7 @@ func (ii *InvertedIndex) Put(terms [][]byte, val uint64) error {
 		return fmt.Errorf("ii: put: %w", err)
 	}
 
-	ii.segments.Add(w.GetName(), len(terms))
+	ii.segments.add(w.GetName(), len(terms))
 	for _, term := range terms {
 		err = w.Append(file.TermValues{term, []uint64{val}})
 		if err != nil {
@@ -34,12 +36,98 @@ func (ii *InvertedIndex) Put(terms [][]byte, val uint64) error {
 // Must close to release segments for merging.
 // min,max (inclusive) allows to skip irrelevant terms.
 func (ii *InvertedIndex) Read(min, max []byte) (go_iterators.Iterator[file.TermValues], error) {
-	readers := make([]go_iterators.Iterator[file.TermValues], 0, ii.segments.Len())
+	segments := ii.segments.readLockAll()
+	return ii.makeIterator(segments, min, max)
+}
 
-	segments := ii.segments.readLock()
+// Merge selects smallest segments to merge into a bigger one.
+// Returns how many segments were merged together.
+// Thread-safe.
+// Select [MinMerge,MaxMerge] segments for merging.
+func (ii *InvertedIndex) Merge(MinMerge, MaxMerge int) (mergedSegments int, err error) {
+	// Select segments for merge
+	segments := make([]*Segment, 0, MaxMerge)
+	ii.segments.safeRead(func() {
+		limit := MaxMerge
+		for _, segment := range ii.segments.list {
+			if limit == 0 {
+				break
+			}
+			ok := segment.merging.CompareAndSwap(false, true)
+			if ok {
+				limit--
+				segments = append(segments, segment)
+			}
+		}
+	})
+	if len(segments) < MinMerge {
+		return 0, nil // nothing to merge
+	}
 
+	// Merge the selected
 	for _, segment := range segments {
-		r, err := file.NewReader(ii.basedir, segment.key)
+		segment.m.RLock()
+	}
+	it, err := ii.makeIterator(segments, nil, nil)
+
+	w, err := file.NewWriter(ii.basedir)
+	if err != nil {
+		return 0, fmt.Errorf("ii: merge: %w", err)
+	}
+
+	termsCount := 0
+	for {
+		tv, err := it.Next()
+		if errors.Is(err, go_iterators.EmptyIterator) {
+			break
+		} else if err != nil {
+			return 0, fmt.Errorf("ii: merge: %w", err)
+		}
+
+		err = w.Append(tv)
+		if err != nil {
+			return 0, fmt.Errorf("ii: merge: %w", err)
+		}
+		termsCount++
+	}
+	err = w.Close()
+	if err != nil {
+		return 0, fmt.Errorf("ii: merge: writer close: %w", err)
+	}
+	err = it.Close()
+	if err != nil {
+		return 0, fmt.Errorf("ii: merge: iterator close: %w", err)
+	}
+	ii.segments.add(w.GetName(), termsCount)
+
+	// Remove merged segments (make them invisible for new reads)
+	ii.segments.detach(segments)
+	mergedSegments = len(segments)
+
+	// Wait until no one is reading merged segments
+	for _, segment := range segments {
+		// wait until nobody is holding the read lock, so the segment can be removed.
+		// reads are rare (merge reads are not overlapping) in a typical index usage, so that should not take long
+		for !segment.m.TryLock() {
+			runtime.Gosched()
+		}
+		err1 := file.RemoveSegment(ii.basedir, segment.key)
+		if err1 != nil {
+			err = err1 // report the last error
+		}
+	}
+
+	return
+}
+
+func (ii *InvertedIndex) Close() error {
+	return nil
+}
+
+func (ii *InvertedIndex) makeIterator(segments []*Segment, min, max []byte) (go_iterators.Iterator[file.TermValues], error) {
+	readers := make([]go_iterators.Iterator[file.TermValues], 0, ii.segments.Len())
+	for _, segment := range segments {
+		r, err := file.NewReader(ii.basedir, segment.key, min, max)
 		if err != nil {
 			return nil, fmt.Errorf("index read: %w", err)
 		}
@@ -53,10 +141,6 @@ func (ii *InvertedIndex) Read(min, max []byte) (go_iterators.Iterator[file.TermV
 	})
 
 	return cit, nil
-}
-
-func (ii *InvertedIndex) Close() error {
-	return nil
 }
 
 func NewInvertedIndex(basedir string) (*InvertedIndex, error) {

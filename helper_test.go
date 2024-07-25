@@ -5,6 +5,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"inverted_index_2/file"
 	"os"
+	"slices"
 	"testing"
 )
 
@@ -14,34 +15,44 @@ type TestingMachine struct {
 	t   *testing.T
 }
 
-type IngestCmd map[uint64][]string  // one value for multiple terms (ingestion)
-type CompareCmd map[string][]uint64 // multiple values per term
+type IngestBulkCmd map[uint64][]string // one value for multiple terms (ingestion)
+type CompareCmd map[string][]uint64    // multiple values per term
+type MergeCmd [3]int                   // min, max, and expected merged segments
 
 // Run follows commands in the sequence
 func (m *TestingMachine) Run(testSequence []any) {
 	for _, s := range testSequence {
-		switch cmd := s.(type) {
-		case CompareCmd:
-			expectedTermValues := make([]file.TermValues, 0, len(cmd))
-			for t, vs := range cmd {
-				expectedTermValues = append(expectedTermValues, file.TermValues{[]byte(t), vs})
-			}
+		m.RunOne(s)
+	}
+}
 
-			it, err := m.ii.Read(nil, nil)
+func (m *TestingMachine) RunOne(testCmd any) {
+	switch cmd := testCmd.(type) {
+	case MergeCmd:
+		mergedSegments, err := m.ii.Merge(cmd[0], cmd[1])
+		require.NoError(m.t, err)
+		require.Equal(m.t, cmd[2], mergedSegments)
+	case CompareCmd:
+		expectedTermValues := make([]file.TermValues, 0, len(cmd))
+		for t, vs := range cmd {
+			expectedTermValues = append(expectedTermValues, file.TermValues{[]byte(t), vs})
+		}
+		slices.SortFunc(expectedTermValues, file.CompareTermValues)
+
+		it, err := m.ii.Read(nil, nil)
+		require.NoError(m.t, err)
+
+		tvs := go_iterators.ToSlice(it)
+		require.NoError(m.t, it.Close())
+		require.Equal(m.t, expectedTermValues, tvs)
+	case IngestBulkCmd:
+		for v, ts := range cmd {
+			terms := make([][]byte, len(ts))
+			for i, sterm := range ts {
+				terms[i] = []byte(sterm)
+			}
+			err := m.ii.Put(terms, v)
 			require.NoError(m.t, err)
-
-			tvs := go_iterators.ToSlice(it)
-			require.NoError(m.t, it.Close())
-			require.Equal(m.t, expectedTermValues, tvs)
-		case IngestCmd:
-			for v, ts := range cmd {
-				terms := make([][]byte, len(ts))
-				for i, sterm := range ts {
-					terms[i] = []byte(sterm)
-				}
-				err := m.ii.Put(terms, v)
-				require.NoError(m.t, err)
-			}
 		}
 	}
 }

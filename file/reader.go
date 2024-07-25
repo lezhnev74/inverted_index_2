@@ -100,7 +100,8 @@ func (r *Reader) Close() error {
 }
 
 // NewReader will open terms and value files and iterate over the term values
-func NewReader(dir string, key string) (*Reader, error) {
+// min, max (inclusive) scopes the internal terms iterator.
+func NewReader(dir string, key string, min, max []byte) (*Reader, error) {
 
 	fstFilename := path.Join(dir, key+"_fst")
 	fst, err := vellum.Open(fstFilename)
@@ -108,7 +109,7 @@ func NewReader(dir string, key string) (*Reader, error) {
 		return nil, fmt.Errorf("reader: terms file: %w", err)
 	}
 
-	fstIterator, err := fst.Iterator(nil, nil)
+	fstIterator, err := fst.Iterator(min, max)
 	if err != nil {
 		return nil, fmt.Errorf("reader: fst: %w", err)
 	}

@@ -2,8 +2,8 @@ package file
 
 import (
 	"errors"
+	go_iterators "github.com/lezhnev74/go-iterators"
 	"github.com/stretchr/testify/require"
-	"io"
 	"os"
 	"testing"
 )
@@ -28,13 +28,13 @@ func TestWriter(t *testing.T) {
 	require.NoError(t, w.Close())
 
 	// Read it back
-	r, err := NewReader(d, w.GetName())
+	r, err := NewReader(d, w.GetName(), nil, nil)
 	require.NoError(t, err)
 
 	actual := make([]TermValues, 0)
 	for {
 		tv, err := r.Next()
-		if errors.Is(err, io.EOF) {
+		if errors.Is(err, go_iterators.EmptyIterator) {
 			break
 		}
 		require.NoError(t, err)
@@ -66,13 +66,13 @@ func TestWriterDirect(t *testing.T) {
 	require.NoError(t, w.Close())
 
 	// Read it back
-	r, err := NewReader(d, w.GetName())
+	r, err := NewReader(d, w.GetName(), nil, nil)
 	require.NoError(t, err)
 
 	actual := make([]TermValues, 0)
 	for {
 		tv, err := r.Next()
-		if errors.Is(err, io.EOF) {
+		if errors.Is(err, go_iterators.EmptyIterator) {
 			break
 		}
 		require.NoError(t, err)
