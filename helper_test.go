@@ -6,6 +6,7 @@ import (
 	"inverted_index_2/file"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -18,6 +19,7 @@ type TestingMachine struct {
 type IngestBulkCmd map[uint64][]string // one value for multiple terms (ingestion)
 type CompareCmd map[string][]uint64    // multiple values per term
 type MergeCmd [3]int                   // min, max, and expected merged segments
+type CountSegmentsCmd int
 
 // Run follows commands in the sequence
 func (m *TestingMachine) Run(testSequence []any) {
@@ -28,10 +30,27 @@ func (m *TestingMachine) Run(testSequence []any) {
 
 func (m *TestingMachine) RunOne(testCmd any) {
 	switch cmd := testCmd.(type) {
+	case CountSegmentsCmd:
+		entries, err := os.ReadDir(m.dir)
+		require.NoError(m.t, err)
+		c := 0
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			if strings.HasSuffix(entry.Name(), "_fst") {
+				c++
+			}
+		}
+
+		require.Equal(m.t, int(cmd), c)
 	case MergeCmd:
 		mergedSegments, err := m.ii.Merge(cmd[0], cmd[1])
 		require.NoError(m.t, err)
-		require.Equal(m.t, cmd[2], mergedSegments)
+
+		if cmd[2] >= 0 {
+			require.Equal(m.t, cmd[2], mergedSegments)
+		}
 	case CompareCmd:
 		expectedTermValues := make([]file.TermValues, 0, len(cmd))
 		for t, vs := range cmd {

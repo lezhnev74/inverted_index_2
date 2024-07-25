@@ -6,6 +6,7 @@ import (
 	go_iterators "github.com/lezhnev74/go-iterators"
 	"inverted_index_2/file"
 	"runtime"
+	"time"
 )
 
 // InvertedIndex manages all index segments, allows concurrent operations.
@@ -45,6 +46,11 @@ func (ii *InvertedIndex) Read(min, max []byte) (go_iterators.Iterator[file.TermV
 // Thread-safe.
 // Select [MinMerge,MaxMerge] segments for merging.
 func (ii *InvertedIndex) Merge(MinMerge, MaxMerge int) (mergedSegments int, err error) {
+	start := time.Now()
+	defer func() {
+		fmt.Printf("Merged in %fs\n", time.Now().Sub(start).Seconds())
+	}()
+
 	// Select segments for merge
 	segments := make([]*Segment, 0, MaxMerge)
 	ii.segments.safeRead(func() {
@@ -69,6 +75,9 @@ func (ii *InvertedIndex) Merge(MinMerge, MaxMerge int) (mergedSegments int, err 
 		segment.m.RLock()
 	}
 	it, err := ii.makeIterator(segments, nil, nil)
+	if err != nil {
+		return 0, fmt.Errorf("ii: merge: %w", err)
+	}
 
 	w, err := file.NewWriter(ii.basedir)
 	if err != nil {
