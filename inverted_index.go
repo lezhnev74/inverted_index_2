@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"github.com/blevesearch/vellum"
 	go_iterators "github.com/lezhnev74/go-iterators"
-	"inverted_index_2/file"
+	"github.com/lezhnev74/inverted_index_2/file"
 	"runtime"
 	"time"
 )
@@ -149,7 +149,10 @@ func (ii *InvertedIndex) Close() error {
 	return nil
 }
 
-func (ii *InvertedIndex) makeIterator(segments []*Segment, min, max []byte) (go_iterators.Iterator[file.TermValues], error) {
+func (ii *InvertedIndex) makeIterator(
+	segments []*Segment,
+	min, max []byte,
+) (go_iterators.Iterator[file.TermValues], error) {
 	readers := make([]go_iterators.Iterator[file.TermValues], 0, ii.segments.Len())
 	for _, segment := range segments {
 		r, err := file.NewReader(ii.basedir, segment.key, min, max)

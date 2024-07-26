@@ -2,8 +2,8 @@ package inverted_index_2
 
 import (
 	go_iterators "github.com/lezhnev74/go-iterators"
+	"github.com/lezhnev74/inverted_index_2/file"
 	"github.com/stretchr/testify/require"
-	"inverted_index_2/file"
 	"os"
 	"slices"
 	"strings"
