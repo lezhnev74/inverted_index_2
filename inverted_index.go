@@ -25,7 +25,6 @@ func (ii *InvertedIndex) Put(terms [][]byte, val uint64) error {
 		return fmt.Errorf("ii: put: %w", err)
 	}
 
-	ii.segments.add(w.GetName(), len(terms))
 	for _, term := range terms {
 		err = w.Append(file.TermValues{term, []uint64{val}})
 		if err != nil {
@@ -40,6 +39,9 @@ func (ii *InvertedIndex) Put(terms [][]byte, val uint64) error {
 
 	// reuse FST
 	ii.fstPool.Put(w.GetFst())
+
+	// make the new segment visible
+	ii.segments.add(w.GetName(), len(terms))
 
 	return nil
 }
@@ -58,9 +60,6 @@ func (ii *InvertedIndex) Read(min, max []byte) (go_iterators.Iterator[file.TermV
 // Select [MinMerge,MaxMerge] segments for merging.
 func (ii *InvertedIndex) Merge(MinMerge, MaxMerge int) (mergedSegments int, err error) {
 	start := time.Now()
-	defer func() {
-		fmt.Printf("Merged in %s\n", time.Now().Sub(start).String())
-	}()
 
 	// Select segments for merge
 	segments := make([]*Segment, 0, MaxMerge)
@@ -140,6 +139,8 @@ func (ii *InvertedIndex) Merge(MinMerge, MaxMerge int) (mergedSegments int, err 
 			err = err1 // report the last error
 		}
 	}
+
+	fmt.Printf("Merged %d terms in %s\n", termsCount, time.Now().Sub(start).String())
 
 	return
 }

@@ -31,8 +31,8 @@ func (s *Segments) readLockAll() (r []*Segment) {
 	s.safeRead(func() {
 		for _, segment := range s.list {
 			segment.m.RLock()
+			r = append(r, segment)
 		}
-		r = append(r, s.list...) // copy
 	})
 	return
 }
