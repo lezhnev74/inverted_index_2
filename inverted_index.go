@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"github.com/blevesearch/vellum"
 	go_iterators "github.com/lezhnev74/go-iterators"
-	"inverted_index_2/file"
+	"github.com/lezhnev74/inverted-index-2/file"
 	"runtime"
 	"time"
 )

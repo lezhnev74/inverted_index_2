@@ -1,8 +1,6 @@
-module inverted_index_2
+module github.com/lezhnev74/inverted-index-2
 
 go 1.22.5
-
-replace github.com/lezhnev74/go-iterators v0.0.0-20240724045513-696ed7ea4279 => /home/dmitry/Code/go/src/go-iterators
 
 require (
 	github.com/blevesearch/vellum v1.0.10
