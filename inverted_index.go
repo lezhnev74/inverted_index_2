@@ -20,7 +20,7 @@ type InvertedIndex struct {
 
 // Put ingests one indexed document (all terms have the same value)
 func (ii *InvertedIndex) Put(terms [][]byte, val uint64) error {
-	w, err := file.NewWriter(ii.basedir, ii.fstPool.Get())
+	w, err := file.NewDirectWriter(ii.basedir, ii.fstPool.Get())
 	if err != nil {
 		return fmt.Errorf("ii: put: %w", err)
 	}
