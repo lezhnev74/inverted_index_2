@@ -1,12 +1,8 @@
 package inverted_index_2
 
 import (
-	"bufio"
-	"fmt"
-	"github.com/stretchr/testify/require"
 	"math/rand"
 	"os"
-	"slices"
 	"sync"
 	"testing"
 )
@@ -62,57 +58,27 @@ func TestMerging(t *testing.T) {
 	m.Close()
 }
 
-func TestMergePerformance(t *testing.T) {
-
-	//fst, err := vellum.Open("./fst.sample2")
-	//require.NoError(t, err)
-	//fmt.Printf("Len: %d\n", fst.Len())
-	//return
-
-	//fstIterator, err := fst.Iterator(nil, nil)
-	//for {
-	//	t, _ := fstIterator.Current()
-	//	fmt.Printf("%s,", t)
-	//	err = fstIterator.Next()
-	//	if err != nil {
-	//		break
-	//	}
-	//}
-	//return
+func TestMergeWithRemoval(t *testing.T) {
+	sequence := []any{
+		IngestBulkCmd(map[uint64][]string{
+			1: {"term1", "term3"},
+			2: {"term2"},
+			3: {"term3"},
+		}),
+		CountSegmentsCmd(3),
+		MergeCmd([]int{2, 2, 2}),
+		CountSegmentsCmd(2),
+		RemoveCmd([]uint64{2}),
+		MergeCmd([]int{2, 2, 2}),
+		CountSegmentsCmd(1),
+		CompareCmd(map[string][]uint64{
+			"term1": {1},
+			"term3": {1, 3},
+		}),
+	}
 
 	m := NewMachine(t)
-
-	// Ingest segments
-	f, _ := os.Open("./terms.1m.txt")
-	defer f.Close()
-
-	i := uint64(0)
-	scanner := bufio.NewScanner(f)
-
-	terms := make([]string, 0, 1000)
-	for scanner.Scan() {
-		terms = append(terms, scanner.Text())
-		if len(terms) == 1_000 {
-			slices.Sort(terms)
-			m.RunOne(IngestBulkCmd(map[uint64][]string{
-				i: terms,
-			}))
-			terms = terms[:0]
-			i++
-		}
-	}
-
-	// Merge
-	merges := 0
-	for {
-		mergedCount, err := m.ii.Merge(2, 10)
-		require.NoError(t, err)
-		if mergedCount == 0 {
-			break
-		}
-		merges++
-	}
-	fmt.Printf("merges: %d\n", merges)
+	m.Run(sequence)
 	m.Close()
 }
 
@@ -157,6 +123,60 @@ func MakeTmpDir() string {
 	}
 	return dir
 }
+
+//func TestMergePerformance(t *testing.T) {
+//
+//	//fst, err := vellum.Open("./fst.sample2")
+//	//require.NoError(t, err)
+//	//fmt.Printf("Len: %d\n", fst.Len())
+//	//return
+//
+//	//fstIterator, err := fst.Iterator(nil, nil)
+//	//for {
+//	//	t, _ := fstIterator.Current()
+//	//	fmt.Printf("%s,", t)
+//	//	err = fstIterator.Next()
+//	//	if err != nil {
+//	//		break
+//	//	}
+//	//}
+//	//return
+//
+//	m := NewMachine(t)
+//
+//	// Ingest segments
+//	f, _ := os.Open("./terms.1m.txt")
+//	defer f.Close()
+//
+//	i := uint64(0)
+//	scanner := bufio.NewScanner(f)
+//
+//	terms := make([]string, 0, 1000)
+//	for scanner.Scan() {
+//		terms = append(terms, scanner.Text())
+//		if len(terms) == 1_000 {
+//			slices.Sort(terms)
+//			m.RunOne(IngestBulkCmd(map[uint64][]string{
+//				i: terms,
+//			}))
+//			terms = terms[:0]
+//			i++
+//		}
+//	}
+//
+//	// Merge
+//	merges := 0
+//	for {
+//		mergedCount, err := m.ii.Merge(2, 10)
+//		require.NoError(t, err)
+//		if mergedCount == 0 {
+//			break
+//		}
+//		merges++
+//	}
+//	fmt.Printf("merges: %d\n", merges)
+//	m.Close()
+//}
 
 var letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 

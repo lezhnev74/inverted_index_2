@@ -19,6 +19,7 @@ type TestingMachine struct {
 type IngestBulkCmd map[uint64][]string // one value for multiple terms (ingestion)
 type CompareCmd map[string][]uint64    // multiple values per term
 type MergeCmd [3]int                   // min, max, and expected merged segments
+type RemoveCmd []uint64                // remove values
 type CountSegmentsCmd int
 
 // Run follows commands in the sequence
@@ -30,6 +31,9 @@ func (m *TestingMachine) Run(testSequence []any) {
 
 func (m *TestingMachine) RunOne(testCmd any) {
 	switch cmd := testCmd.(type) {
+	case RemoveCmd:
+		err := m.ii.Remove(cmd)
+		require.NoError(m.t, err)
 	case CountSegmentsCmd:
 		entries, err := os.ReadDir(m.dir)
 		require.NoError(m.t, err)

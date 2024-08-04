@@ -7,15 +7,19 @@ import (
 	"github.com/blevesearch/vellum"
 	go_iterators "github.com/lezhnev74/go-iterators"
 	"github.com/lezhnev74/inverted_index_2/file"
+	"os"
+	"path"
 	"runtime"
+	"slices"
 	"time"
 )
 
 // InvertedIndex manages all index segments, allows concurrent operations.
 type InvertedIndex struct {
-	segments Segments
-	basedir  string
-	fstPool  *Pool[*vellum.Builder]
+	segments    Segments
+	basedir     string
+	fstPool     *Pool[*vellum.Builder]
+	removedList *RemovedLists
 }
 
 // Put ingests one indexed document (all terms have the same value)
@@ -54,11 +58,34 @@ func (ii *InvertedIndex) Read(min, max []byte) (go_iterators.Iterator[file.TermV
 	return ii.makeIterator(segments, min, max)
 }
 
+// Remove remembers removed values, later they are accounted during merging.
+func (ii *InvertedIndex) Remove(values []uint64) error {
+	t := time.Now().UnixNano()
+	ii.removedList.Put(t, values)
+
+	return ii.WriteRemovedList()
+}
+
+func (ii *InvertedIndex) WriteRemovedList() error {
+	s, err := ii.removedList.Serialize()
+	if err != nil {
+		return fmt.Errorf("write rem list: %w", err)
+	}
+
+	filepath := path.Join(ii.basedir, "removed.list")
+	err = os.WriteFile(filepath, s, os.ModePerm)
+	if err != nil {
+		return fmt.Errorf("write rem list: %w", err)
+	}
+
+	return nil
+}
+
 // Merge selects smallest segments to merge into a bigger one.
 // Returns how many segments were merged together.
 // Thread-safe.
 // Select [MinMerge,MaxMerge] segments for merging.
-func (ii *InvertedIndex) Merge(MinMerge, MaxMerge int) (mergedSegments int, err error) {
+func (ii *InvertedIndex) Merge(MinMerge, MaxMerge int) (mergedSegmentsLen int, err error) {
 	start := time.Now()
 
 	// Select segments for merge
@@ -94,6 +121,7 @@ func (ii *InvertedIndex) Merge(MinMerge, MaxMerge int) (mergedSegments int, err 
 		return 0, fmt.Errorf("ii: merge: %w", err)
 	}
 
+	removedValues := ii.removedList.Values()
 	termsCount := 0
 	for {
 		tv, err := it.Next()
@@ -101,6 +129,21 @@ func (ii *InvertedIndex) Merge(MinMerge, MaxMerge int) (mergedSegments int, err 
 			break
 		} else if err != nil {
 			return 0, fmt.Errorf("ii: merge: %w", err)
+		}
+
+		i := 0
+		for _, v := range tv.Values {
+			_, removed := slices.BinarySearch(removedValues, v)
+			if removed {
+				continue
+			}
+			tv.Values[i] = v
+			i++
+		}
+		tv.Values = tv.Values[:i]
+
+		if len(tv.Values) == 0 {
+			continue
 		}
 
 		err = w.Append(tv)
@@ -125,7 +168,7 @@ func (ii *InvertedIndex) Merge(MinMerge, MaxMerge int) (mergedSegments int, err 
 
 	// Remove merged segments (make them invisible for new reads)
 	ii.segments.detach(segments)
-	mergedSegments = len(segments)
+	mergedSegmentsLen = len(segments)
 
 	// Wait until no one is reading merged segments
 	for _, segment := range segments {
@@ -149,6 +192,8 @@ func (ii *InvertedIndex) Close() error {
 	return nil
 }
 
+// makeIterator returns merging iterator to read through all segment files
+// like from a simple sorted array.
 func (ii *InvertedIndex) makeIterator(segments []*Segment, min, max []byte) (go_iterators.Iterator[file.TermValues], error) {
 	readers := make([]go_iterators.Iterator[file.TermValues], 0, ii.segments.Len())
 	for _, segment := range segments {
@@ -179,8 +224,22 @@ func NewInvertedIndex(basedir string) (*InvertedIndex, error) {
 		},
 	)
 
+	rl := NewRemovedList(make(map[int64][]uint64))
+	remListSerialized, err := os.ReadFile(path.Join(basedir, "removed.list"))
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("rem list: %w", err)
+		}
+	} else {
+		rl, err = UnserializeRemovedList(remListSerialized)
+		if err != nil {
+			return nil, fmt.Errorf("rem list: %w", err)
+		}
+	}
+
 	return &InvertedIndex{
-		basedir: basedir,
-		fstPool: pool,
+		basedir:     basedir,
+		fstPool:     pool,
+		removedList: rl,
 	}, nil
 }
