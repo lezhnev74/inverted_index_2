@@ -15,12 +15,12 @@ func TestRemovedLists(t *testing.T) {
 	t2 := time.Now().UnixNano()
 	rl.Put(t2, []uint64{2, 20, 30})
 
-	require.Equal(t, []uint32{1, 2, 5, 10, 20, 30}, rl.Values())
+	require.Equal(t, []uint64{1, 2, 5, 10, 20, 30}, rl.Values())
 
 	t3 := time.Now().UnixNano()
 	rl.Sync([]int64{t2, t3})
 
-	require.Equal(t, []uint32{2, 20, 30}, rl.Values())
+	require.Equal(t, []uint64{2, 20, 30}, rl.Values())
 }
 
 func TestSerialize(t *testing.T) {

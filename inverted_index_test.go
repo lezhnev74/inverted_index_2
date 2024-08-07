@@ -1,11 +1,42 @@
 package inverted_index_2
 
 import (
+	go_iterators "github.com/lezhnev74/go-iterators"
+	"github.com/lezhnev74/inverted_index_2/file"
+	"github.com/stretchr/testify/require"
 	"math/rand"
 	"os"
 	"sync"
 	"testing"
 )
+
+func TestInitFromExistingFiles(t *testing.T) {
+	d := MakeTmpDir()
+	defer os.RemoveAll(d)
+
+	ii, err := NewInvertedIndex(d)
+	require.NoError(t, err)
+
+	err = ii.Put([][]byte{[]byte("term1"), []byte("term2")}, 1)
+	require.NoError(t, err)
+	err = ii.Put([][]byte{[]byte("term2"), []byte("term3")}, 2)
+	require.NoError(t, err)
+
+	require.NoError(t, ii.Close())
+
+	// Open again and see the state caught up
+	ii, err = NewInvertedIndex(d)
+	require.NoError(t, err)
+	it, err := ii.Read(nil, nil)
+	tvs := go_iterators.ToSlice(it)
+
+	expected := []file.TermValues{
+		{[]byte("term1"), []uint64{1}},
+		{[]byte("term2"), []uint64{1, 2}},
+		{[]byte("term3"), []uint64{2}},
+	}
+	require.Equal(t, expected, tvs)
+}
 
 func TestIngestion(t *testing.T) {
 	sequence := []any{
@@ -74,6 +105,10 @@ func TestMergeWithRemoval(t *testing.T) {
 		CompareCmd(map[string][]uint64{
 			"term1": {1},
 			"term3": {1, 3},
+		}),
+		RemoveCmd([]uint64{10}), // invoke sync to disk for the list
+		CheckCmd(func(ii *InvertedIndex) {
+			require.Equal(t, []uint64{10}, ii.removedList.Values()) // merged value has gone
 		}),
 	}
 

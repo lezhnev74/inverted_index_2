@@ -17,8 +17,8 @@ type Writer struct {
 	basedir    string
 	valuesFile *os.File
 	fst        *vellum.Builder
-	// name is the prefix for the filenames, used as a key for the inverted index segment
-	name string
+	// key is the prefix for the filenames, used as a key for the inverted index segment
+	key string
 	// valuesOffset keeps the current offset in the values file to accept new compressed data
 	// then the offset goes to the FST
 	valuesOffset uint64
@@ -75,19 +75,19 @@ func (w *Writer) Close() error {
 
 	// rename files to make them visible for readers
 	os.Rename(
-		path.Join(w.basedir, w.name+"_fst_tmp"),
-		path.Join(w.basedir, w.name+"_fst"),
+		path.Join(w.basedir, w.key+"_fst_tmp"),
+		path.Join(w.basedir, w.key+"_fst"),
 	)
 	os.Rename(
-		path.Join(w.basedir, w.name+"_val_tmp"),
-		path.Join(w.basedir, w.name+"_val"),
+		path.Join(w.basedir, w.key+"_val_tmp"),
+		path.Join(w.basedir, w.key+"_val"),
 	)
 
 	return nil
 }
 
-func (w *Writer) GetName() string {
-	return w.name
+func (w *Writer) GetKey() string {
+	return w.key
 }
 
 // NewDirectWriter creates a single-file writer (only FST).
@@ -111,7 +111,7 @@ func NewDirectWriter(dir string, fst *vellum.Builder) (w *Writer, err error) {
 
 	return &Writer{
 		basedir: dir,
-		name:    key,
+		key:     key,
 		fst:     fst,
 	}, nil
 }
@@ -123,7 +123,7 @@ func NewWriter(dir string, fst *vellum.Builder) (w *Writer, err error) {
 	if err != nil {
 		return
 	}
-	key := w.GetName()
+	key := w.GetKey()
 
 	valuesFile, err := os.Create(path.Join(dir, key+"_val_tmp"))
 	if err != nil {

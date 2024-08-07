@@ -11,12 +11,14 @@ import (
 	"path"
 	"runtime"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 )
 
 // InvertedIndex manages all index segments, allows concurrent operations.
 type InvertedIndex struct {
-	segments    Segments
+	segments    *Segments
 	basedir     string
 	fstPool     *Pool[*vellum.Builder]
 	removedList *RemovedLists
@@ -45,7 +47,7 @@ func (ii *InvertedIndex) Put(terms [][]byte, val uint64) error {
 	ii.fstPool.Put(w.GetFst())
 
 	// make the new segment visible
-	ii.segments.add(w.GetName(), len(terms))
+	ii.segments.add(w.GetKey(), len(terms))
 
 	return nil
 }
@@ -59,9 +61,23 @@ func (ii *InvertedIndex) Read(min, max []byte) (go_iterators.Iterator[file.TermV
 }
 
 // Remove remembers removed values, later they are accounted during merging.
-func (ii *InvertedIndex) Remove(values []uint64) error {
+func (ii *InvertedIndex) Remove(values []uint64) (err error) {
 	t := time.Now().UnixNano()
 	ii.removedList.Put(t, values)
+
+	timestamps := []int64{}
+	key := 0
+	ii.segments.safeRead(func() {
+		for _, segment := range ii.segments.list {
+			key, err = strconv.Atoi(segment.key)
+			if err != nil {
+				err = fmt.Errorf("key to int conversion: %w", err)
+				break
+			}
+			timestamps = append(timestamps, int64(key))
+		}
+	})
+	ii.removedList.Sync(timestamps)
 
 	return ii.WriteRemovedList()
 }
@@ -164,7 +180,7 @@ func (ii *InvertedIndex) Merge(MinMerge, MaxMerge int) (mergedSegmentsLen int, e
 	if err != nil {
 		return 0, fmt.Errorf("ii: merge: iterator close: %w", err)
 	}
-	ii.segments.add(w.GetName(), termsCount)
+	ii.segments.add(w.GetKey(), termsCount)
 
 	// Remove merged segments (make them invisible for new reads)
 	ii.segments.detach(segments)
@@ -198,7 +214,11 @@ func (ii *InvertedIndex) makeIterator(segments []*Segment, min, max []byte) (go_
 	readers := make([]go_iterators.Iterator[file.TermValues], 0, ii.segments.Len())
 	for _, segment := range segments {
 		r, err := file.NewReader(ii.basedir, segment.key, min, max)
-		if err != nil {
+		if errors.Is(err, vellum.ErrIteratorDone) {
+			// here we checked that this particular segment won't have terms for us
+			// so do not include it to the selecting tree iterator.
+			continue
+		} else if err != nil {
 			return nil, fmt.Errorf("index read: %w", err)
 		}
 		readers = append(readers, r)
@@ -206,7 +226,11 @@ func (ii *InvertedIndex) makeIterator(segments []*Segment, min, max []byte) (go_
 
 	it := go_iterators.NewMergingIterator(readers, file.CompareTermValues, file.MergeTermValues)
 	cit := go_iterators.NewClosingIterator[file.TermValues](it, func(err error) error {
+		err2 := it.Close()
 		ii.segments.readRelease(segments)
+		if err == nil {
+			err = err2
+		}
 		return err
 	})
 
@@ -224,6 +248,36 @@ func NewInvertedIndex(basedir string) (*InvertedIndex, error) {
 		},
 	)
 
+	// Init segments list (load all existing files)
+	segments := &Segments{}
+	entries, err := os.ReadDir(basedir)
+	if err != nil {
+		return nil, fmt.Errorf("load inverted index: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if !strings.HasSuffix(entry.Name(), "_fst") {
+			continue
+		}
+		fpath := path.Join(basedir, entry.Name())
+		key, _ := strings.CutSuffix(entry.Name(), "_fst")
+
+		v, err := vellum.Open(fpath)
+		if err != nil {
+			return nil, fmt.Errorf("load inverted index: %w", err)
+		}
+		termsCount := v.Len()
+		err = v.Close()
+		if err != nil {
+			return nil, fmt.Errorf("load inverted index: %w", err)
+		}
+
+		segments.add(key, termsCount)
+	}
+
+	// Init removed list (load from disk if exists)
 	rl := NewRemovedList(make(map[int64][]uint64))
 	remListSerialized, err := os.ReadFile(path.Join(basedir, "removed.list"))
 	if err != nil {
@@ -241,5 +295,6 @@ func NewInvertedIndex(basedir string) (*InvertedIndex, error) {
 		basedir:     basedir,
 		fstPool:     pool,
 		removedList: rl,
+		segments:    segments,
 	}, nil
 }

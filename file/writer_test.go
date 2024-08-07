@@ -28,7 +28,7 @@ func TestWriter(t *testing.T) {
 	require.NoError(t, w.Close())
 
 	// Read it back
-	r, err := NewReader(d, w.GetName(), nil, nil)
+	r, err := NewReader(d, w.GetKey(), nil, nil)
 	require.NoError(t, err)
 
 	actual := make([]TermValues, 0)
@@ -66,7 +66,7 @@ func TestWriterDirect(t *testing.T) {
 	require.NoError(t, w.Close())
 
 	// Read it back
-	r, err := NewReader(d, w.GetName(), nil, nil)
+	r, err := NewReader(d, w.GetKey(), nil, nil)
 	require.NoError(t, err)
 
 	actual := make([]TermValues, 0)
