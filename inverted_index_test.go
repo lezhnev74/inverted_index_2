@@ -31,27 +31,27 @@ func TestInitFromExistingFiles(t *testing.T) {
 	tvs := go_iterators.ToSlice(it)
 
 	expected := []file.TermValues{
-		{[]byte("term1"), []uint64{1}},
-		{[]byte("term2"), []uint64{1, 2}},
-		{[]byte("term3"), []uint64{2}},
+		{[]byte("term1"), []uint32{1}},
+		{[]byte("term2"), []uint32{1, 2}},
+		{[]byte("term3"), []uint32{2}},
 	}
 	require.Equal(t, expected, tvs)
 }
 
 func TestIngestion(t *testing.T) {
 	sequence := []any{
-		IngestBulkCmd(map[uint64][]string{
+		IngestBulkCmd(map[uint32][]string{
 			1: {"term1"},
 		}),
-		CompareCmd(map[string][]uint64{
+		CompareCmd(map[string][]uint32{
 			"term1": {1},
 		}),
-		IngestBulkCmd(map[uint64][]string{
+		IngestBulkCmd(map[uint32][]string{
 			1: {"term1"}, // idempotency test
 			2: {"term1", "term2"},
 			3: {"term3"},
 		}),
-		CompareCmd(map[string][]uint64{
+		CompareCmd(map[string][]uint32{
 			"term1": {1, 2},
 			"term2": {2},
 			"term3": {3},
@@ -63,9 +63,51 @@ func TestIngestion(t *testing.T) {
 	m.Close()
 }
 
+func TestReadPartial(t *testing.T) {
+
+	initValues := map[uint32][][]byte{
+		1: {[]byte("A")},
+		2: {[]byte("B")},
+		3: {[]byte("C")},
+	}
+
+	d := MakeTmpDir()
+	defer os.RemoveAll(d)
+
+	ii, err := NewInvertedIndex(d)
+	require.NoError(t, err)
+
+	for s, terms := range initValues {
+		err = ii.Put(terms, s)
+		require.NoError(t, err)
+	}
+
+	// MERGE
+	_, err = ii.Merge(2, 200)
+	require.NoError(t, err)
+
+	// READ BACK: MIDDLE TERMS
+	it, err := ii.Read([]byte("A"), []byte("B"))
+	require.NoError(t, err)
+	tvs := go_iterators.ToSlice(it)
+	require.Equal(t, []file.TermValues{
+		{[]byte("A"), []uint32{1}},
+		{[]byte("B"), []uint32{2}},
+	}, tvs)
+
+	// READ BACK: END TERMS
+	it, err = ii.Read([]byte("B"), []byte("C"))
+	require.NoError(t, err)
+	tvs = go_iterators.ToSlice(it)
+	require.Equal(t, []file.TermValues{
+		{[]byte("B"), []uint32{2}},
+		{[]byte("C"), []uint32{3}},
+	}, tvs)
+}
+
 func TestMerging(t *testing.T) {
 	sequence := []any{
-		IngestBulkCmd(map[uint64][]string{
+		IngestBulkCmd(map[uint32][]string{
 			1: {"term1"}, // idempotency test
 			2: {"term1", "term2"},
 			3: {"term3"},
@@ -77,7 +119,7 @@ func TestMerging(t *testing.T) {
 		CountSegmentsCmd(1),
 		MergeCmd([]int{2, 2, 0}), // idempotency test
 		CountSegmentsCmd(1),
-		CompareCmd(map[string][]uint64{
+		CompareCmd(map[string][]uint32{
 			"term1": {1, 2},
 			"term2": {2},
 			"term3": {3},
@@ -91,7 +133,7 @@ func TestMerging(t *testing.T) {
 
 func TestMergeWithRemoval(t *testing.T) {
 	sequence := []any{
-		IngestBulkCmd(map[uint64][]string{
+		IngestBulkCmd(map[uint32][]string{
 			1: {"term1", "term3"},
 			2: {"term2"},
 			3: {"term3"},
@@ -99,16 +141,16 @@ func TestMergeWithRemoval(t *testing.T) {
 		CountSegmentsCmd(3),
 		MergeCmd([]int{2, 2, 2}),
 		CountSegmentsCmd(2),
-		RemoveCmd([]uint64{2}),
+		RemoveCmd([]uint32{2}),
 		MergeCmd([]int{2, 2, 2}),
 		CountSegmentsCmd(1),
-		CompareCmd(map[string][]uint64{
+		CompareCmd(map[string][]uint32{
 			"term1": {1},
 			"term3": {1, 3},
 		}),
-		RemoveCmd([]uint64{10}), // invoke sync to disk for the list
+		RemoveCmd([]uint32{10}), // invoke sync to disk for the list
 		CheckCmd(func(ii *InvertedIndex) {
-			require.Equal(t, []uint64{10}, ii.removedList.Values()) // merged value has gone
+			require.Equal(t, []uint32{10}, ii.removedList.Values()) // merged value has gone
 		}),
 	}
 
@@ -120,13 +162,13 @@ func TestMergeWithRemoval(t *testing.T) {
 func TestConcurrentAccess(t *testing.T) {
 
 	sequence := []any{
-		IngestBulkCmd(map[uint64][]string{
+		IngestBulkCmd(map[uint32][]string{
 			1: {"term1"}, // idempotency test
 			2: {"term1", "term2"},
 			3: {"term3"},
 		}),
 		MergeCmd([]int{2, 2, 2}),
-		CompareCmd(map[string][]uint64{
+		CompareCmd(map[string][]uint32{
 			"term1": {1, 2},
 			"term2": {2},
 			"term3": {3},

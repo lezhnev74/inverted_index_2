@@ -16,10 +16,10 @@ type TestingMachine struct {
 	t   *testing.T
 }
 
-type IngestBulkCmd map[uint64][]string // one value for multiple terms (ingestion)
-type CompareCmd map[string][]uint64    // multiple values per term
+type IngestBulkCmd map[uint32][]string // one value for multiple terms (ingestion)
+type CompareCmd map[string][]uint32    // multiple values per term
 type MergeCmd [3]int                   // min, max, and expected merged segments
-type RemoveCmd []uint64                // remove values
+type RemoveCmd []uint32                // remove values
 type CountSegmentsCmd int
 type CheckCmd func(ii *InvertedIndex) // run manual check
 

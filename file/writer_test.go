@@ -11,9 +11,9 @@ import (
 func TestWriter(t *testing.T) {
 
 	input := []TermValues{
-		{[]byte("term1"), []uint64{10, 500, 300}},
-		{[]byte("term2"), []uint64{}},
-		{[]byte("term3"), []uint64{66, 5513}},
+		{[]byte("term1"), []uint32{10, 500, 300}},
+		{[]byte("term2"), []uint32{}},
+		{[]byte("term3"), []uint32{66, 5513}},
 	}
 
 	d := MakeTmpDir()
@@ -50,8 +50,8 @@ func TestWriterDirect(t *testing.T) {
 	// Direct only keeps one fst file, so each term has only one value (during ingestion)
 
 	input := []TermValues{
-		{[]byte("term1"), []uint64{10}},
-		{[]byte("term2"), []uint64{11}},
+		{[]byte("term1"), []uint32{10}},
+		{[]byte("term2"), []uint32{11}},
 	}
 
 	d := MakeTmpDir()

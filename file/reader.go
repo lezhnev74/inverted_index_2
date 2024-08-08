@@ -1,6 +1,7 @@
 package file
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -22,6 +23,7 @@ type Reader struct {
 	prevOffset     uint64
 	fstIterator    *vellum.FSTIterator
 	prevFstError   error
+	maxTerm        []byte // right boundary, INCLUSIVE
 }
 
 func (r *Reader) Next() (TermValues, error) {
@@ -44,6 +46,13 @@ func (r *Reader) Next() (TermValues, error) {
 		r.prevTerm, r.prevOffset = r.fstIterator.Current()
 		r.prevTerm = append([]byte{}, r.prevTerm...) // copy from FST internal buffer
 		runSize = r.prevOffset - valuesOffset
+
+		if r.maxTerm != nil && bytes.Compare(r.prevTerm, r.maxTerm) > 0 {
+			// iterator returned a term that is greater than the right iteration boundary.
+			// so we need to return the current term and stop on the next call.
+			r.prevFstError = vellum.ErrIteratorDone
+		}
+
 	} else {
 		// peek failed:
 		if errors.Is(r.prevFstError, vellum.ErrIteratorDone) {
@@ -55,15 +64,15 @@ func (r *Reader) Next() (TermValues, error) {
 		}
 	}
 
-	tv := TermValues{term, []uint64{}}
+	tv := TermValues{term, []uint32{}}
 
 	if r.valuesFile == nil {
 		// direct mode
-		tv.Values = []uint64{valuesOffset}
+		tv.Values = []uint32{uint32(valuesOffset)}
 		return tv, nil
 	}
 
-	compressed := make([]uint64, runSize/8)
+	compressed := make([]uint32, runSize/4)
 	_, err := r.valuesFile.Seek(int64(valuesOffset), io.SeekStart)
 	if err != nil {
 		return tv, fmt.Errorf("reader: values file: %w", err)
@@ -74,7 +83,7 @@ func (r *Reader) Next() (TermValues, error) {
 		return tv, fmt.Errorf("reader: values file: decompress: %w", err)
 	}
 
-	tv.Values = intcomp.UncompressUint64(compressed, nil)
+	tv.Values = intcomp.UncompressUint32(compressed, nil)
 
 	return tv, nil
 }
@@ -109,7 +118,10 @@ func NewReader(dir string, key string, min, max []byte) (*Reader, error) {
 		return nil, fmt.Errorf("reader: terms file: %w", err)
 	}
 
-	fstIterator, err := fst.Iterator(min, max)
+	// do not set the right bound to "max", we will do it manually.
+	// as FST iterator won't return anything after max, so we can't
+	// calculate the correct values offset because of that.
+	fstIterator, err := fst.Iterator(min, nil)
 	if err != nil {
 		return nil, fmt.Errorf("reader: fst: %w", err)
 	}
@@ -139,6 +151,7 @@ func NewReader(dir string, key string, min, max []byte) (*Reader, error) {
 		valuesFileSize: valuesFileSize,
 		prevTerm:       append([]byte{}, firstTerm...), // copy from FST internal buffer
 		prevOffset:     firstOffset,
+		maxTerm:        max,
 	}
 
 	return r, nil

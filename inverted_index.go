@@ -25,14 +25,14 @@ type InvertedIndex struct {
 }
 
 // Put ingests one indexed document (all terms have the same value)
-func (ii *InvertedIndex) Put(terms [][]byte, val uint64) error {
+func (ii *InvertedIndex) Put(terms [][]byte, val uint32) error {
 	w, err := file.NewDirectWriter(ii.basedir, ii.fstPool.Get())
 	if err != nil {
 		return fmt.Errorf("ii: put: %w", err)
 	}
 
 	for _, term := range terms {
-		err = w.Append(file.TermValues{term, []uint64{val}})
+		err = w.Append(file.TermValues{term, []uint32{val}})
 		if err != nil {
 			return fmt.Errorf("index put: %w", err)
 		}
@@ -61,7 +61,7 @@ func (ii *InvertedIndex) Read(min, max []byte) (go_iterators.Iterator[file.TermV
 }
 
 // Remove remembers removed values, later they are accounted during merging.
-func (ii *InvertedIndex) Remove(values []uint64) (err error) {
+func (ii *InvertedIndex) Remove(values []uint32) (err error) {
 	t := time.Now().UnixNano()
 	ii.removedList.Put(t, values)
 
@@ -226,11 +226,8 @@ func (ii *InvertedIndex) makeIterator(segments []*Segment, min, max []byte) (go_
 
 	it := go_iterators.NewMergingIterator(readers, file.CompareTermValues, file.MergeTermValues)
 	cit := go_iterators.NewClosingIterator[file.TermValues](it, func(err error) error {
-		err2 := it.Close()
+		//err2 := it.Close()
 		ii.segments.readRelease(segments)
-		if err == nil {
-			err = err2
-		}
 		return err
 	})
 
@@ -278,7 +275,7 @@ func NewInvertedIndex(basedir string) (*InvertedIndex, error) {
 	}
 
 	// Init removed list (load from disk if exists)
-	rl := NewRemovedList(make(map[int64][]uint64))
+	rl := NewRemovedList(make(map[int64][]uint32))
 	remListSerialized, err := os.ReadFile(path.Join(basedir, "removed.list"))
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {

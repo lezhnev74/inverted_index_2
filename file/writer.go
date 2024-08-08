@@ -31,7 +31,7 @@ func (w *Writer) GetFst() *vellum.Builder { return w.fst }
 func (w *Writer) Append(tv TermValues) (err error) {
 
 	if w.valuesFile == nil { // direct mode
-		err = w.fst.Insert(tv.Term, tv.Values[0])
+		err = w.fst.Insert(tv.Term, uint64(tv.Values[0]))
 		if err != nil {
 			return fmt.Errorf("writer: fst insert: %w", err)
 		}
@@ -45,7 +45,7 @@ func (w *Writer) Append(tv TermValues) (err error) {
 	}
 
 	// Compress values
-	compressed := intcomp.CompressUint64(tv.Values, nil)
+	compressed := intcomp.CompressUint32(tv.Values, nil)
 
 	// Put values to the values file
 	err = binary.Write(w.valuesFile, binary.LittleEndian, compressed)

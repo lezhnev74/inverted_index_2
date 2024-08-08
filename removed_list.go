@@ -15,11 +15,11 @@ type RemovedLists struct {
 	// the values are batched as we push a removal list upon source files removal.
 	// so a bunch of values appear at the same time.
 	// the indexes are unix nano timestamps.
-	lists map[int64][]uint64
+	lists map[int64][]uint32
 	m     sync.Mutex
 }
 
-func NewRemovedList(lists map[int64][]uint64) *RemovedLists {
+func NewRemovedList(lists map[int64][]uint32) *RemovedLists {
 	return &RemovedLists{lists: lists}
 }
 
@@ -33,7 +33,7 @@ func UnserializeRemovedList(s []byte) (*RemovedLists, error) {
 }
 
 // Put places the slice to the list (note that is does not copy the slice's array)
-func (rm *RemovedLists) Put(timestamp int64, values []uint64) {
+func (rm *RemovedLists) Put(timestamp int64, values []uint32) {
 	rm.m.Lock()
 	defer rm.m.Unlock()
 	rm.lists[timestamp] = values
@@ -41,8 +41,8 @@ func (rm *RemovedLists) Put(timestamp int64, values []uint64) {
 
 // Values returns all removed lists combined, and sorted,
 // so During the merge it can use binary search.
-func (rm *RemovedLists) Values() []uint64 {
-	r := make([]uint64, 0)
+func (rm *RemovedLists) Values() []uint32 {
+	r := make([]uint32, 0)
 	for t := range rm.lists {
 		r = append(r, rm.lists[t]...)
 	}

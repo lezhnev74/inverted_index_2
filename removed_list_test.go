@@ -7,13 +7,13 @@ import (
 )
 
 func TestRemovedLists(t *testing.T) {
-	rl := NewRemovedList(make(map[int64][]uint64))
+	rl := NewRemovedList(make(map[int64][]uint32))
 
 	t1 := time.Now().UnixNano()
-	rl.Put(t1, []uint64{1, 5, 10})
+	rl.Put(t1, []uint32{1, 5, 10})
 
 	t2 := time.Now().UnixNano()
-	rl.Put(t2, []uint64{2, 20, 30})
+	rl.Put(t2, []uint32{2, 20, 30})
 
 	require.Equal(t, []uint64{1, 2, 5, 10, 20, 30}, rl.Values())
 
@@ -24,9 +24,9 @@ func TestRemovedLists(t *testing.T) {
 }
 
 func TestSerialize(t *testing.T) {
-	rl := NewRemovedList(make(map[int64][]uint64))
-	rl.Put(time.Now().UnixNano(), []uint64{1, 5, 10})
-	rl.Put(time.Now().UnixNano(), []uint64{2, 20, 30})
+	rl := NewRemovedList(make(map[int64][]uint32))
+	rl.Put(time.Now().UnixNano(), []uint32{1, 5, 10})
+	rl.Put(time.Now().UnixNano(), []uint32{2, 20, 30})
 	b, err := rl.Serialize()
 	require.NoError(t, err)
 
