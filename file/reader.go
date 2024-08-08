@@ -8,6 +8,7 @@ import (
 	"github.com/blevesearch/vellum"
 	go_iterators "github.com/lezhnev74/go-iterators"
 	"github.com/ronanh/intcomp"
+	"golang.org/x/exp/mmap"
 	"io"
 	"os"
 	"path"
@@ -24,6 +25,8 @@ type Reader struct {
 	fstIterator    *vellum.FSTIterator
 	prevFstError   error
 	maxTerm        []byte // right boundary, INCLUSIVE
+	valuesMmap     *mmap.ReaderAt
+	valuesBuf      []byte
 }
 
 func (r *Reader) Next() (TermValues, error) {
@@ -73,12 +76,13 @@ func (r *Reader) Next() (TermValues, error) {
 	}
 
 	compressed := make([]uint32, runSize/4)
-	_, err := r.valuesFile.Seek(int64(valuesOffset), io.SeekStart)
-	if err != nil {
-		return tv, fmt.Errorf("reader: values file: %w", err)
+
+	_, err := r.valuesMmap.ReadAt(r.valuesBuf, int64(valuesOffset))
+	if err != nil && !errors.Is(err, io.EOF) {
+		return tv, fmt.Errorf("reader: values file: mmap: %w", err)
 	}
 
-	err = binary.Read(r.valuesFile, binary.LittleEndian, compressed)
+	err = binary.Read(bytes.NewBuffer(r.valuesBuf), binary.LittleEndian, compressed)
 	if err != nil {
 		return tv, fmt.Errorf("reader: values file: decompress: %w", err)
 	}
@@ -93,8 +97,13 @@ func (r *Reader) Close() error {
 	err1 := r.fst.Close()
 
 	var err2 error
+	if r.valuesMmap != nil {
+		err2 = r.valuesMmap.Close()
+	}
+
+	var err3 error
 	if r.valuesFile != nil {
-		err2 = r.valuesFile.Close()
+		err3 = r.valuesFile.Close()
 	}
 
 	if err0 != nil {
@@ -105,7 +114,11 @@ func (r *Reader) Close() error {
 		return err1
 	}
 
-	return err2
+	if err2 != nil {
+		return err2
+	}
+
+	return err3
 }
 
 // NewReader will open terms and value files and iterate over the term values
@@ -132,6 +145,7 @@ func NewReader(dir string, key string, min, max []byte) (*Reader, error) {
 	valuesFilename := path.Join(dir, key+"_val")
 	valuesFileSize := uint64(0)
 	valuesFile, err := os.Open(valuesFilename)
+	var mmapReader *mmap.ReaderAt
 	if !errors.Is(err, os.ErrNotExist) {
 		// direct mode enabled if no values file found
 		if err != nil {
@@ -142,6 +156,11 @@ func NewReader(dir string, key string, min, max []byte) (*Reader, error) {
 			return nil, fmt.Errorf("reader: value file: %w", err)
 		}
 		valuesFileSize = uint64(fInfo.Size())
+
+		mmapReader, err = mmap.Open(valuesFilename)
+		if err != nil {
+			return nil, fmt.Errorf("reader: value file: %w", err)
+		}
 	}
 
 	r := &Reader{
@@ -152,6 +171,8 @@ func NewReader(dir string, key string, min, max []byte) (*Reader, error) {
 		prevTerm:       append([]byte{}, firstTerm...), // copy from FST internal buffer
 		prevOffset:     firstOffset,
 		maxTerm:        max,
+		valuesMmap:     mmapReader,
+		valuesBuf:      make([]byte, 4096),
 	}
 
 	return r, nil
