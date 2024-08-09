@@ -1,14 +1,60 @@
 package inverted_index_2
 
 import (
+	"bytes"
 	"errors"
 	go_iterators "github.com/lezhnev74/go-iterators"
 	"github.com/lezhnev74/inverted_index_2/file"
 	"github.com/stretchr/testify/require"
+	"math/rand"
 	"os"
 	"runtime"
+	"slices"
+	"sync"
 	"testing"
 )
+
+func TestConcurrent(t *testing.T) {
+	d := MakeTmpDir()
+	defer os.RemoveAll(d)
+	ii, err := NewInvertedIndex(d)
+	require.NoError(t, err)
+
+	wg := sync.WaitGroup{}
+	for i := 0; i < 1000; i++ {
+		// PUT OPS
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < rand.Intn(100); j++ {
+				terms := [][]byte{
+					[]byte(randomString(10, 20)),
+					[]byte(randomString(10, 20)),
+					[]byte(randomString(10, 20)),
+				}
+				slices.SortFunc(terms, bytes.Compare)
+				require.NoError(t, ii.Put(terms, uint32(i)))
+			}
+		}()
+
+		// READ OPS
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			it, err := ii.Read(nil, nil)
+			require.NoError(t, err)
+			for {
+				_, err := it.Next()
+				if errors.Is(err, go_iterators.EmptyIterator) {
+					break
+				}
+				require.NoError(t, err)
+			}
+			require.NoError(t, it.Close())
+		}()
+	}
+	wg.Wait()
+}
 
 func TestPut(t *testing.T) {
 

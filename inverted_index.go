@@ -64,6 +64,7 @@ func (ii *InvertedIndex) Put(terms [][]byte, val uint32) error {
 func (ii *InvertedIndex) findShard(key string) *Shard {
 	ii.shardsM.RLock()
 	defer ii.shardsM.RUnlock()
+
 	shardIndex, ok := slices.BinarySearchFunc(ii.shards, key, func(s *Shard, key string) int {
 		return strings.Compare(s.GetKey(), key)
 	})
@@ -77,6 +78,14 @@ func (ii *InvertedIndex) newShard(key string) (*Shard, error) {
 	ii.shardsM.Lock()
 	defer ii.shardsM.Unlock()
 
+	// check again if somebody made the shard already
+	shardIndex, ok := slices.BinarySearchFunc(ii.shards, key, func(s *Shard, key string) int {
+		return strings.Compare(s.GetKey(), key)
+	})
+	if ok {
+		return ii.shards[shardIndex], nil // fast path
+	}
+
 	shardBaseDir := path.Join(ii.basedir, key)
 	err := os.Mkdir(shardBaseDir, os.ModePerm)
 	if err != nil {
@@ -88,9 +97,6 @@ func (ii *InvertedIndex) newShard(key string) (*Shard, error) {
 		return nil, fmt.Errorf("new shard: %w", err)
 	}
 
-	shardIndex, _ := slices.BinarySearchFunc(ii.shards, key, func(s *Shard, key string) int {
-		return strings.Compare(s.GetKey(), key)
-	})
 	ii.shards = append(ii.shards, shard) // allocate once due to extending
 	copy(ii.shards[shardIndex+1:], ii.shards[shardIndex:])
 	ii.shards[shardIndex] = shard
