@@ -14,10 +14,11 @@ type Segments struct {
 
 // Segment represents a single inverted index segment (possibly multiple files on disk)
 type Segment struct {
-	key     string
-	terms   int
-	m       sync.RWMutex
-	merging atomic.Bool
+	key              string
+	terms            int
+	minTerm, maxTerm []byte
+	m                sync.RWMutex
+	merging          atomic.Bool
 }
 
 func (s *Segments) safeRead(fn func()) {
@@ -51,9 +52,9 @@ func (s *Segments) safeWrite(fn func()) {
 }
 
 // add maintains the order by size (for merging)
-func (s *Segments) add(key string, terms int) {
+func (s *Segments) add(key string, terms int, termMin, termMax []byte) {
 	s.safeWrite(func() {
-		s.list = append(s.list, &Segment{key: key, terms: terms})
+		s.list = append(s.list, &Segment{key: key, terms: terms, minTerm: termMin, maxTerm: termMax})
 		slices.SortFunc(s.list, func(a, b *Segment) int { return cmp.Compare(a.terms, b.terms) })
 	})
 }

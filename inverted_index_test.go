@@ -46,7 +46,7 @@ func TestPut(t *testing.T) {
 	ii = nil
 	runtime.GC()
 
-	// Reinitiate index to see that shards are visible
+	// Re-init the index to see that shards are visible
 	ii, err = NewInvertedIndex(d)
 	require.NoError(t, err)
 
@@ -64,4 +64,65 @@ func TestPut(t *testing.T) {
 	require.NoError(t, it.Close())
 	require.Equal(t, expectedTermValues, tvs)
 	require.Equal(t, 2, len(ii.shards))
+}
+
+func TestReadScoped(t *testing.T) {
+
+	d := MakeTmpDir()
+	defer os.RemoveAll(d)
+	ii, err := NewInvertedIndex(d)
+	require.NoError(t, err)
+
+	require.NoError(t, ii.Put([][]byte{[]byte("aa")}, 1))
+	require.NoError(t, ii.Put([][]byte{[]byte("bb")}, 2))
+	require.NoError(t, ii.Put([][]byte{[]byte("cc")}, 3))
+	require.NoError(t, ii.Put([][]byte{[]byte("dd")}, 4))
+
+	// Read All
+	it, err := ii.Read(nil, nil)
+	require.NoError(t, err)
+	actualValues := go_iterators.ToSlice(it)
+	require.NoError(t, it.Close())
+	expectedTermValues := []file.TermValues{
+		{[]byte("aa"), []uint32{1}},
+		{[]byte("bb"), []uint32{2}},
+		{[]byte("cc"), []uint32{3}},
+		{[]byte("dd"), []uint32{4}},
+	}
+	require.Equal(t, expectedTermValues, actualValues)
+
+	// Read with Left boundary
+	it, err = ii.Read([]byte("a~"), nil)
+	require.NoError(t, err)
+	actualValues = go_iterators.ToSlice(it)
+	require.NoError(t, it.Close())
+	expectedTermValues = []file.TermValues{
+		{[]byte("bb"), []uint32{2}},
+		{[]byte("cc"), []uint32{3}},
+		{[]byte("dd"), []uint32{4}},
+	}
+	require.Equal(t, expectedTermValues, actualValues)
+
+	// Read with Right boundary (INCLUSIVE)
+	it, err = ii.Read(nil, []byte("cc"))
+	require.NoError(t, err)
+	actualValues = go_iterators.ToSlice(it)
+	require.NoError(t, it.Close())
+	expectedTermValues = []file.TermValues{
+		{[]byte("aa"), []uint32{1}},
+		{[]byte("bb"), []uint32{2}},
+		{[]byte("cc"), []uint32{3}},
+	}
+	require.Equal(t, expectedTermValues, actualValues)
+
+	// Read with both boundaries (INCLUSIVE)
+	it, err = ii.Read([]byte("bb"), []byte("cc"))
+	require.NoError(t, err)
+	actualValues = go_iterators.ToSlice(it)
+	require.NoError(t, it.Close())
+	expectedTermValues = []file.TermValues{
+		{[]byte("bb"), []uint32{2}},
+		{[]byte("cc"), []uint32{3}},
+	}
+	require.Equal(t, expectedTermValues, actualValues)
 }

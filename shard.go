@@ -1,6 +1,7 @@
 package inverted_index_2
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"github.com/blevesearch/vellum"
@@ -35,7 +36,13 @@ func (s *Shard) Put(terms [][]byte, val uint32) error {
 		return fmt.Errorf("s: put: %w", err)
 	}
 
+	var minTerm, maxTerm []byte
 	for _, term := range terms {
+		if minTerm == nil {
+			minTerm = term
+		}
+		maxTerm = term
+
 		err = w.Append(file.TermValues{term, []uint32{val}})
 		if err != nil {
 			return fmt.Errorf("index put: %w", err)
@@ -51,14 +58,14 @@ func (s *Shard) Put(terms [][]byte, val uint32) error {
 	s.fstPool.Put(w.GetFst())
 
 	// make the new segment visible
-	s.segments.add(w.GetKey(), len(terms))
+	s.segments.add(w.GetKey(), len(terms), minTerm, maxTerm)
 
 	return nil
 }
 
 // Read returns merging iterator for all available index segments.
 // Must close to release segments for merging.
-// min,max (inclusive) allows to skip irrelevant terms.
+// [min,max] (inclusive) allows to skip irrelevant terms.
 func (s *Shard) Read(min, max []byte) (go_iterators.Iterator[file.TermValues], error) {
 	segments := s.segments.readLockAll()
 	return s.makeIterator(segments, min, max)
@@ -143,6 +150,7 @@ func (s *Shard) Merge(MinMerge, MaxMerge int) (mergedSegmentsLen int, err error)
 
 	removedValues := s.removedList.Values()
 	termsCount := 0
+	minTerm, maxTerm := []byte(nil), []byte(nil)
 	for {
 		tv, err := it.Next()
 		if errors.Is(err, go_iterators.EmptyIterator) {
@@ -150,6 +158,11 @@ func (s *Shard) Merge(MinMerge, MaxMerge int) (mergedSegmentsLen int, err error)
 		} else if err != nil {
 			return 0, fmt.Errorf("s: merge: %w", err)
 		}
+
+		if minTerm == nil {
+			minTerm = tv.Term
+		}
+		maxTerm = tv.Term
 
 		i := 0
 		for _, v := range tv.Values {
@@ -184,7 +197,7 @@ func (s *Shard) Merge(MinMerge, MaxMerge int) (mergedSegmentsLen int, err error)
 	if err != nil {
 		return 0, fmt.Errorf("s: merge: iterator close: %w", err)
 	}
-	s.segments.add(w.GetKey(), termsCount)
+	s.segments.add(w.GetKey(), termsCount, minTerm, maxTerm)
 
 	// Remove merged segments (make them invisible for new reads)
 	s.segments.detach(segments)
@@ -241,6 +254,25 @@ func (s *Shard) makeIterator(segments []*Segment, min, max []byte) (go_iterators
 	return cit, nil
 }
 
+func (s *Shard) MinMax() (terms [][]byte) {
+	terms = make([][]byte, 2)
+	segments := s.segments.readLockAll()
+	for _, segment := range segments {
+		if terms[0] == nil {
+			terms[0] = segment.minTerm
+		} else if bytes.Compare(terms[0], segment.minTerm) > 1 {
+			terms[0] = segment.minTerm
+		}
+
+		if terms[1] == nil {
+			terms[1] = segment.maxTerm
+		} else if bytes.Compare(terms[1], segment.maxTerm) < 1 {
+			terms[1] = segment.maxTerm
+		}
+	}
+	return
+}
+
 func NewShard(basedir string, sharedPool *Pool[*vellum.Builder], sharedRemovedList *RemovedLists) (*Shard, error) {
 
 	// Init segments list (load all existing files)
@@ -264,12 +296,20 @@ func NewShard(basedir string, sharedPool *Pool[*vellum.Builder], sharedRemovedLi
 			return nil, fmt.Errorf("load inverted index: %w", err)
 		}
 		termsCount := v.Len()
+		minTerm, err := v.GetMinKey()
+		if err != nil {
+			return nil, fmt.Errorf("load inverted index: %w", err)
+		}
+		maxTerm, err := v.GetMaxKey()
+		if err != nil {
+			return nil, fmt.Errorf("load inverted index: %w", err)
+		}
 		err = v.Close()
 		if err != nil {
 			return nil, fmt.Errorf("load inverted index: %w", err)
 		}
 
-		segments.add(key, termsCount)
+		segments.add(key, termsCount, minTerm, maxTerm)
 	}
 
 	return &Shard{

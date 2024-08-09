@@ -7,9 +7,9 @@ import (
 
 func TestOrdering(t *testing.T) {
 	l := &Segments{}
-	l.add("a", 10)
-	l.add("b", 1)
-	l.add("c", 3)
+	l.add("a", 10, nil, nil)
+	l.add("b", 1, nil, nil)
+	l.add("c", 3, nil, nil)
 
 	require.Equal(t, 1, l.list[0].terms)
 	require.Equal(t, 3, l.list[1].terms)
@@ -18,9 +18,9 @@ func TestOrdering(t *testing.T) {
 
 func TestDetach(t *testing.T) {
 	l := &Segments{}
-	l.add("a", 10)
-	l.add("b", 1)
-	l.add("c", 3)
+	l.add("a", 10, nil, nil)
+	l.add("b", 1, nil, nil)
+	l.add("c", 3, nil, nil)
 
 	detach := []*Segment{
 		l.list[0],

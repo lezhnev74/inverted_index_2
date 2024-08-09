@@ -13,6 +13,30 @@ import (
 	"time"
 )
 
+func TestMinMaxTerms(t *testing.T) {
+	d := MakeTmpDir()
+	defer os.RemoveAll(d)
+	shard := makeTestShard(t, d)
+
+	// Put one
+	err := shard.Put([][]byte{[]byte("term1")}, 1)
+	require.NoError(t, err)
+	minmax := shard.MinMax()
+	require.Equal(t, [][]byte{[]byte("term1"), []byte("term1")}, minmax)
+
+	// Put two
+	err = shard.Put([][]byte{[]byte("term2")}, 2)
+	require.NoError(t, err)
+	minmax = shard.MinMax()
+	require.Equal(t, [][]byte{[]byte("term1"), []byte("term2")}, minmax)
+
+	// Put many
+	err = shard.Put([][]byte{[]byte("term1"), []byte("term2"), []byte("term3")}, 3)
+	require.NoError(t, err)
+	minmax = shard.MinMax()
+	require.Equal(t, [][]byte{[]byte("term1"), []byte("term3")}, minmax)
+}
+
 func TestInitFromExistingFiles(t *testing.T) {
 	d := MakeTmpDir()
 	defer os.RemoveAll(d)

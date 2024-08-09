@@ -24,6 +24,11 @@ type InvertedIndex struct {
 	removedList *RemovedLists
 }
 
+type ShardDescriptor struct {
+	*Shard
+	min, max []byte
+}
+
 // Put spreads terms into shards.
 // terms must be sorted.
 func (ii *InvertedIndex) Put(terms [][]byte, val uint32) error {
@@ -93,19 +98,48 @@ func (ii *InvertedIndex) newShard(key string) (*Shard, error) {
 	return shard, nil
 }
 
+// Read returns merging iterator for all available index shards.
+// Must close to release segments for merging.
+// [min,max] (inclusive) allows to skip irrelevant terms.
 func (ii *InvertedIndex) Read(min, max []byte) (go_iterators.Iterator[file.TermValues], error) {
 
-	shardIterators := make([]go_iterators.Iterator[file.TermValues], 0, len(ii.shards))
-	for _, shard := range ii.shards {
-		shardIt, err := shard.Read(min, max)
-		if err != nil {
-			return nil, fmt.Errorf("index read: %w", err)
+	// Reading from all shards at once is not efficient as we have to open a lot of files.
+	// Since shards are sorted by the key, we can instead iterate over each shard sequentially,
+	// merging shard iterators to a single stream.
+	// Also, min/max can be easily respected by skipping shards which keys are lower
+	// (min/max must be at least 2 bytes for that).
+
+	ii.shardsM.RLock()
+	shards := append([]*Shard{}, ii.shards...) // make a local copy of shards
+	ii.shardsM.RUnlock()
+
+	// Here filter the shards that are outside the min/max prefixes
+	x := 0
+	for _, s := range shards {
+		minmax := s.MinMax()
+		// left boundary
+		if min != nil && bytes.Compare(min, minmax[1]) > 0 {
+			continue
 		}
-		shardIterators = append(shardIterators, shardIt)
+		// right boundary
+		if max != nil && bytes.Compare(max, minmax[0]) < 0 {
+			continue
+		}
+
+		shards[x] = s
+		x++
 	}
+	shards = shards[:x]
 
-	it := go_iterators.NewMergingIterator(shardIterators, file.CompareTermValues, file.MergeTermValues)
-
+	var shard *Shard
+	pickNextShard := func() (go_iterators.Iterator[file.TermValues], error) {
+		if len(shards) == 0 {
+			return nil, go_iterators.EmptyIterator
+		}
+		shard, shards = shards[0], shards[1:]
+		return shard.Read(min, max)
+	}
+	it := go_iterators.NewSequentialDynamicIterator(pickNextShard)
 	return it, nil
 }
 
@@ -150,6 +184,7 @@ func NewInvertedIndex(basedir string) (*InvertedIndex, error) {
 		if err != nil {
 			return nil, fmt.Errorf("shard init: %w", err)
 		}
+
 		shards = append(shards, shard)
 	}
 
