@@ -126,6 +126,31 @@ func TestPut(t *testing.T) {
 	require.Equal(t, 2, len(ii.shards))
 }
 
+func TestSearchByPrefix(t *testing.T) {
+	d := MakeTmpDir()
+	defer os.RemoveAll(d)
+	ii, err := NewInvertedIndex(d)
+	require.NoError(t, err)
+
+	require.NoError(t, ii.Put([][]byte{[]byte("a12")}, 1))
+	require.NoError(t, ii.Put([][]byte{[]byte("a13")}, 2))
+	require.NoError(t, ii.Put([][]byte{[]byte("a20")}, 3))
+	require.NoError(t, ii.Put([][]byte{[]byte("a30")}, 4))
+	//
+	require.NoError(t, ii.Put([][]byte{[]byte("termA")}, 5))
+	require.NoError(t, ii.Put([][]byte{[]byte("termB")}, 6))
+	require.NoError(t, ii.Put([][]byte{[]byte("termC")}, 7))
+
+	//
+	found, err := ii.PrefixSearch([][]byte{[]byte("a1")})
+	require.NoError(t, err)
+	require.Equal(t, map[string][]uint32{"a1": {1, 2}}, found)
+
+	//
+	found, err = ii.PrefixSearch([][]byte{[]byte("term"), []byte("unknown")})
+	require.NoError(t, err)
+	require.Equal(t, map[string][]uint32{"term": {5, 6, 7}}, found)
+}
 func TestReadScoped(t *testing.T) {
 
 	d := MakeTmpDir()

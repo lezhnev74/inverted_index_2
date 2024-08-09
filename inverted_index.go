@@ -7,8 +7,10 @@ import (
 	"github.com/blevesearch/vellum"
 	go_iterators "github.com/lezhnev74/go-iterators"
 	"github.com/lezhnev74/inverted_index_2/file"
+	"golang.org/x/sync/errgroup"
 	"os"
 	"path"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -134,6 +136,102 @@ func (ii *InvertedIndex) newShard(key string) (*Shard, error) {
 	return shard, nil
 }
 
+// PrefixSearch will test all terms in the index and compile a result only for those
+// with the same prefix.
+func (ii *InvertedIndex) PrefixSearch(prefixes [][]byte) (found map[string][]uint32, err error) {
+	found = make(map[string][]uint32, len(prefixes))
+	slices.SortFunc(prefixes, bytes.Compare)
+	concurrency := runtime.NumCPU()
+
+	// Here we can search in every shard concurrently
+	// First, we need to select which shards may contain the prefixes.
+	ii.shardsM.RLock()
+	shards := append([]*Shard{}, ii.shards...) // make a local copy of shards
+	ii.shardsM.RUnlock()
+
+	// Remember which prefixes matched which shards,
+	// so later we can use it to catch when iteration can be stopped.
+	shardPrefixes := map[*Shard][][]byte{}
+
+	x := 0
+	for _, shard := range shards {
+		minmax := shard.MinMax()
+		shardOk := false
+
+		for _, prefix := range prefixes {
+			// compare common part of a prefix and a min term in the shard
+			l := min(len(prefix), len(minmax[0]))
+			if bytes.Compare(prefix[:l], minmax[0][:l]) < 0 {
+				continue
+			}
+
+			// compare common part of a prefix and a max term in the shard
+			l = min(len(prefix), len(minmax[1]))
+			if bytes.Compare(prefix[:l], minmax[1][:l]) > 0 {
+				continue
+			}
+
+			shardPrefixes[shard] = append(shardPrefixes[shard], prefix)
+			shardOk = true
+		}
+
+		if shardOk {
+			shards[x] = shard
+			x++
+		}
+	}
+	shards = shards[:x]
+
+	// Run concurrent reading from all selected shards, limiting the concurrency by the free-list.
+	wg := errgroup.Group{}
+	wg.SetLimit(concurrency)
+	for _, shard := range shards {
+		wg.Go(func() error {
+
+			// select which prefixes are suitable for this shard
+			prefixes := shardPrefixes[shard]
+			greatestPrefix := prefixes[len(prefixes)-1]
+
+			// we can set the left boundary as it is always smaller than any term that it may contain.
+			// but the right boundary is open.
+			it, err := shard.Read(prefixes[0], nil)
+			if err != nil {
+				err = fmt.Errorf("prefix search: %w", err)
+			}
+			defer it.Close()
+
+			for {
+				tv, err := it.Next()
+				if err != nil {
+					if errors.Is(err, go_iterators.EmptyIterator) {
+						break
+					}
+					err = fmt.Errorf("prefix search: %w", err)
+					return err
+				}
+
+				// Here we apply the right boundary of the iteration
+				// if the term's prefix is greater than the greatest prefix than we should stop.
+				termPrefix := tv.Term[:min(len(tv.Term), len(greatestPrefix))]
+				if bytes.Compare(greatestPrefix, termPrefix) < 0 {
+					// this term is greater than the greatest prefix, so no point in iterating further.
+					break
+				}
+
+				for _, prefix := range prefixes {
+					if bytes.HasPrefix(tv.Term, prefix) {
+						found[string(prefix)] = append(found[string(prefix)], tv.Values...)
+					}
+				}
+			}
+
+			return nil
+		})
+	}
+	err = wg.Wait()
+	return
+}
+
 // Read returns merging iterator for all available index shards.
 // Must close to release segments for merging.
 // [min,max] (inclusive) allows to skip irrelevant terms.
@@ -222,6 +320,7 @@ func NewInvertedIndex(basedir string) (*InvertedIndex, error) {
 		}
 
 		shards = append(shards, shard)
+		slices.SortFunc(shards, func(s1, s2 *Shard) int { return strings.Compare(s1.GetKey(), s2.GetKey()) })
 	}
 
 	return &InvertedIndex{

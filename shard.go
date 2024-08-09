@@ -118,7 +118,7 @@ func (s *Shard) Merge(reqCount, mCount int) (mergedSegmentsLen int, err error) {
 	// Select segments for merge
 	segments := make([]*Segment, 0, mCount)
 	s.segments.safeRead(func() {
-		limit := mCount
+		limit := max(reqCount, mCount)
 		for _, segment := range s.segments.list {
 			if limit == 0 {
 				break
