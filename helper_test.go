@@ -11,7 +11,7 @@ import (
 )
 
 type TestingMachine struct {
-	ii  *InvertedIndex
+	ii  *Shard
 	dir string
 	t   *testing.T
 }
@@ -21,7 +21,7 @@ type CompareCmd map[string][]uint32    // multiple values per term
 type MergeCmd [3]int                   // min, max, and expected merged segments
 type RemoveCmd []uint32                // remove values
 type CountSegmentsCmd int
-type CheckCmd func(ii *InvertedIndex) // run manual check
+type CheckCmd func(ii *Shard) // run manual check
 
 // Run follows commands in the sequence
 func (m *TestingMachine) Run(testSequence []any) {
@@ -93,8 +93,7 @@ func (m *TestingMachine) Close() {
 
 func NewMachine(t *testing.T) *TestingMachine {
 	d := MakeTmpDir()
-	ii, err := NewInvertedIndex(d)
-	require.NoError(t, err)
+	ii := makeTestShard(t, d)
 
 	return &TestingMachine{
 		ii:  ii,

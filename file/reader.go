@@ -172,7 +172,11 @@ func NewReader(dir string, key string, min, max []byte) (*Reader, error) {
 		prevOffset:     firstOffset,
 		maxTerm:        max,
 		valuesMmap:     mmapReader,
-		valuesBuf:      make([]byte, 4096),
+
+		// this buffer is used to read compressed values from the mmaped file.
+		// It does not know the size of the compressed run, so this number is a guess
+		// just to avoid storing sizes of all runs in the file itself.
+		valuesBuf: make([]byte, 4096),
 	}
 
 	return r, nil

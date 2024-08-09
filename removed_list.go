@@ -16,7 +16,7 @@ type RemovedLists struct {
 	// so a bunch of values appear at the same time.
 	// the indexes are unix nano timestamps.
 	lists map[int64][]uint32
-	m     sync.Mutex
+	m     sync.RWMutex
 }
 
 func NewRemovedList(lists map[int64][]uint32) *RemovedLists {
@@ -40,8 +40,11 @@ func (rm *RemovedLists) Put(timestamp int64, values []uint32) {
 }
 
 // Values returns all removed lists combined, and sorted,
-// so During the merge it can use binary search.
+// so during the merge it can use binary search.
 func (rm *RemovedLists) Values() []uint32 {
+	rm.m.RLock()
+	defer rm.m.RUnlock()
+
 	r := make([]uint32, 0)
 	for t := range rm.lists {
 		r = append(r, rm.lists[t]...)

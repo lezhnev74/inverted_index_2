@@ -1,266 +1,67 @@
 package inverted_index_2
 
 import (
+	"errors"
 	go_iterators "github.com/lezhnev74/go-iterators"
 	"github.com/lezhnev74/inverted_index_2/file"
 	"github.com/stretchr/testify/require"
-	"math/rand"
 	"os"
-	"sync"
+	"runtime"
 	"testing"
 )
 
-func TestInitFromExistingFiles(t *testing.T) {
+func TestPut(t *testing.T) {
+
 	d := MakeTmpDir()
 	defer os.RemoveAll(d)
-
 	ii, err := NewInvertedIndex(d)
 	require.NoError(t, err)
 
-	err = ii.Put([][]byte{[]byte("term1"), []byte("term2")}, 1)
+	err = ii.Put([][]byte{[]byte("ab1"), []byte("ab2")}, 1)
 	require.NoError(t, err)
-	err = ii.Put([][]byte{[]byte("term2"), []byte("term3")}, 2)
+	err = ii.Put([][]byte{[]byte("ab2"), []byte("cd1")}, 2)
 	require.NoError(t, err)
 
-	require.NoError(t, ii.Close())
+	it, err := ii.Read(nil, nil)
+	require.NoError(t, err)
+	tvs := make([]file.TermValues, 0)
+	for {
+		tv, err := it.Next()
+		if errors.Is(err, go_iterators.EmptyIterator) {
+			break
+		}
+		require.NoError(t, err)
+		tvs = append(tvs, tv)
+	}
+	require.NoError(t, it.Close())
+	expectedTermValues := []file.TermValues{
+		{[]byte("ab1"), []uint32{1}},
+		{[]byte("ab2"), []uint32{1, 2}},
+		{[]byte("cd1"), []uint32{2}},
+	}
+	require.Equal(t, expectedTermValues, tvs)
+	require.Equal(t, 2, len(ii.shards))
 
-	// Open again and see the state caught up
+	tvs = nil
+	ii = nil
+	runtime.GC()
+
+	// Reinitiate index to see that shards are visible
 	ii, err = NewInvertedIndex(d)
 	require.NoError(t, err)
-	it, err := ii.Read(nil, nil)
-	tvs := go_iterators.ToSlice(it)
 
-	expected := []file.TermValues{
-		{[]byte("term1"), []uint32{1}},
-		{[]byte("term2"), []uint32{1, 2}},
-		{[]byte("term3"), []uint32{2}},
-	}
-	require.Equal(t, expected, tvs)
-}
-
-func TestIngestion(t *testing.T) {
-	sequence := []any{
-		IngestBulkCmd(map[uint32][]string{
-			1: {"term1"},
-		}),
-		CompareCmd(map[string][]uint32{
-			"term1": {1},
-		}),
-		IngestBulkCmd(map[uint32][]string{
-			1: {"term1"}, // idempotency test
-			2: {"term1", "term2"},
-			3: {"term3"},
-		}),
-		CompareCmd(map[string][]uint32{
-			"term1": {1, 2},
-			"term2": {2},
-			"term3": {3},
-		}),
-	}
-
-	m := NewMachine(t)
-	m.Run(sequence)
-	m.Close()
-}
-
-func TestReadPartial(t *testing.T) {
-
-	initValues := map[uint32][][]byte{
-		1: {[]byte("A")},
-		2: {[]byte("B")},
-		3: {[]byte("C")},
-	}
-
-	d := MakeTmpDir()
-	defer os.RemoveAll(d)
-
-	ii, err := NewInvertedIndex(d)
+	it, err = ii.Read(nil, nil)
 	require.NoError(t, err)
-
-	for s, terms := range initValues {
-		err = ii.Put(terms, s)
+	tvs = make([]file.TermValues, 0)
+	for {
+		tv, err := it.Next()
+		if errors.Is(err, go_iterators.EmptyIterator) {
+			break
+		}
 		require.NoError(t, err)
+		tvs = append(tvs, tv)
 	}
-
-	// MERGE
-	_, err = ii.Merge(2, 200)
-	require.NoError(t, err)
-
-	// READ BACK: MIDDLE TERMS
-	it, err := ii.Read([]byte("A"), []byte("B"))
-	require.NoError(t, err)
-	tvs := go_iterators.ToSlice(it)
-	require.Equal(t, []file.TermValues{
-		{[]byte("A"), []uint32{1}},
-		{[]byte("B"), []uint32{2}},
-	}, tvs)
-
-	// READ BACK: END TERMS
-	it, err = ii.Read([]byte("B"), []byte("C"))
-	require.NoError(t, err)
-	tvs = go_iterators.ToSlice(it)
-	require.Equal(t, []file.TermValues{
-		{[]byte("B"), []uint32{2}},
-		{[]byte("C"), []uint32{3}},
-	}, tvs)
-}
-
-func TestMerging(t *testing.T) {
-	sequence := []any{
-		IngestBulkCmd(map[uint32][]string{
-			1: {"term1"}, // idempotency test
-			2: {"term1", "term2"},
-			3: {"term3"},
-		}),
-		CountSegmentsCmd(3),
-		MergeCmd([]int{2, 2, 2}),
-		CountSegmentsCmd(2),
-		MergeCmd([]int{2, 2, 2}),
-		CountSegmentsCmd(1),
-		MergeCmd([]int{2, 2, 0}), // idempotency test
-		CountSegmentsCmd(1),
-		CompareCmd(map[string][]uint32{
-			"term1": {1, 2},
-			"term2": {2},
-			"term3": {3},
-		}),
-	}
-
-	m := NewMachine(t)
-	m.Run(sequence)
-	m.Close()
-}
-
-func TestMergeWithRemoval(t *testing.T) {
-	sequence := []any{
-		IngestBulkCmd(map[uint32][]string{
-			1: {"term1", "term3"},
-			2: {"term2"},
-			3: {"term3"},
-		}),
-		CountSegmentsCmd(3),
-		MergeCmd([]int{2, 2, 2}),
-		CountSegmentsCmd(2),
-		RemoveCmd([]uint32{2}),
-		MergeCmd([]int{2, 2, 2}),
-		CountSegmentsCmd(1),
-		CompareCmd(map[string][]uint32{
-			"term1": {1},
-			"term3": {1, 3},
-		}),
-		RemoveCmd([]uint32{10}), // invoke sync to disk for the list
-		CheckCmd(func(ii *InvertedIndex) {
-			require.Equal(t, []uint32{10}, ii.removedList.Values()) // merged value has gone
-		}),
-	}
-
-	m := NewMachine(t)
-	m.Run(sequence)
-	m.Close()
-}
-
-func TestConcurrentAccess(t *testing.T) {
-
-	sequence := []any{
-		IngestBulkCmd(map[uint32][]string{
-			1: {"term1"}, // idempotency test
-			2: {"term1", "term2"},
-			3: {"term3"},
-		}),
-		MergeCmd([]int{2, 2, 2}),
-		CompareCmd(map[string][]uint32{
-			"term1": {1, 2},
-			"term2": {2},
-			"term3": {3},
-		}),
-	}
-
-	m := NewMachine(t)
-	begin := make(chan int)
-	wg := sync.WaitGroup{}
-
-	for i := 0; i < 100; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			<-begin
-			m.Run(sequence)
-		}()
-	}
-
-	close(begin)
-	wg.Wait()
-	m.Close()
-}
-
-func MakeTmpDir() string {
-	dir, err := os.MkdirTemp("", "")
-	if err != nil {
-		panic(err)
-	}
-	return dir
-}
-
-//func TestMergePerformance(t *testing.T) {
-//
-//	//fst, err := vellum.Open("./fst.sample2")
-//	//require.NoError(t, err)
-//	//fmt.Printf("Len: %d\n", fst.Len())
-//	//return
-//
-//	//fstIterator, err := fst.Iterator(nil, nil)
-//	//for {
-//	//	t, _ := fstIterator.Current()
-//	//	fmt.Printf("%s,", t)
-//	//	err = fstIterator.Next()
-//	//	if err != nil {
-//	//		break
-//	//	}
-//	//}
-//	//return
-//
-//	m := NewMachine(t)
-//
-//	// Ingest segments
-//	f, _ := os.Open("./terms.1m.txt")
-//	defer f.Close()
-//
-//	i := uint64(0)
-//	scanner := bufio.NewScanner(f)
-//
-//	terms := make([]string, 0, 1000)
-//	for scanner.Scan() {
-//		terms = append(terms, scanner.Text())
-//		if len(terms) == 1_000 {
-//			slices.Sort(terms)
-//			m.RunOne(IngestBulkCmd(map[uint64][]string{
-//				i: terms,
-//			}))
-//			terms = terms[:0]
-//			i++
-//		}
-//	}
-//
-//	// Merge
-//	merges := 0
-//	for {
-//		mergedCount, err := m.ii.Merge(2, 10)
-//		require.NoError(t, err)
-//		if mergedCount == 0 {
-//			break
-//		}
-//		merges++
-//	}
-//	fmt.Printf("merges: %d\n", merges)
-//	m.Close()
-//}
-
-var letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
-
-func randomString(min, max int) string {
-	b := make([]rune, min+rand.Intn(max-min))
-	for i := range b {
-		b[i] = letterRunes[rand.Intn(len(letterRunes))]
-	}
-	return string(b)
+	require.NoError(t, it.Close())
+	require.Equal(t, expectedTermValues, tvs)
+	require.Equal(t, 2, len(ii.shards))
 }

@@ -9,233 +9,109 @@ import (
 	"github.com/lezhnev74/inverted_index_2/file"
 	"os"
 	"path"
-	"runtime"
 	"slices"
-	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
-// InvertedIndex manages all index segments, allows concurrent operations.
 type InvertedIndex struct {
-	segments    *Segments
+	shards  []*Shard
+	shardsM sync.RWMutex
+
 	basedir     string
 	fstPool     *Pool[*vellum.Builder]
 	removedList *RemovedLists
 }
 
-// Put ingests one indexed document (all terms have the same value)
+// Put spreads terms into shards.
+// terms must be sorted.
 func (ii *InvertedIndex) Put(terms [][]byte, val uint32) error {
-	w, err := file.NewDirectWriter(ii.basedir, ii.fstPool.Get())
-	if err != nil {
-		return fmt.Errorf("ii: put: %w", err)
-	}
 
-	for _, term := range terms {
-		err = w.Append(file.TermValues{term, []uint32{val}})
-		if err != nil {
-			return fmt.Errorf("index put: %w", err)
-		}
-	}
+	termsIt := go_iterators.NewSliceIterator(terms)
+	shardingIterator := go_iterators.NewGroupingIterator(termsIt, func(t []byte) any { return shardKey(t) })
 
-	err = w.Close()
-	if err != nil {
-		return fmt.Errorf("index put: %w", err)
-	}
-
-	// reuse FST
-	ii.fstPool.Put(w.GetFst())
-
-	// make the new segment visible
-	ii.segments.add(w.GetKey(), len(terms))
-
-	return nil
-}
-
-// Read returns merging iterator for all available index segments.
-// Must close to release segments for merging.
-// min,max (inclusive) allows to skip irrelevant terms.
-func (ii *InvertedIndex) Read(min, max []byte) (go_iterators.Iterator[file.TermValues], error) {
-	segments := ii.segments.readLockAll()
-	return ii.makeIterator(segments, min, max)
-}
-
-// Remove remembers removed values, later they are accounted during merging.
-func (ii *InvertedIndex) Remove(values []uint32) (err error) {
-	t := time.Now().UnixNano()
-	ii.removedList.Put(t, values)
-
-	timestamps := []int64{}
-	key := 0
-	ii.segments.safeRead(func() {
-		for _, segment := range ii.segments.list {
-			key, err = strconv.Atoi(segment.key)
-			if err != nil {
-				err = fmt.Errorf("key to int conversion: %w", err)
-				break
-			}
-			timestamps = append(timestamps, int64(key))
-		}
-	})
-	ii.removedList.Sync(timestamps)
-
-	return ii.WriteRemovedList()
-}
-
-func (ii *InvertedIndex) WriteRemovedList() error {
-	s, err := ii.removedList.Serialize()
-	if err != nil {
-		return fmt.Errorf("write rem list: %w", err)
-	}
-
-	filepath := path.Join(ii.basedir, "removed.list")
-	err = os.WriteFile(filepath, s, os.ModePerm)
-	if err != nil {
-		return fmt.Errorf("write rem list: %w", err)
-	}
-
-	return nil
-}
-
-// Merge selects smallest segments to merge into a bigger one.
-// Returns how many segments were merged together.
-// Thread-safe.
-// Select [MinMerge,MaxMerge] segments for merging.
-func (ii *InvertedIndex) Merge(MinMerge, MaxMerge int) (mergedSegmentsLen int, err error) {
-	start := time.Now()
-
-	// Select segments for merge
-	segments := make([]*Segment, 0, MaxMerge)
-	ii.segments.safeRead(func() {
-		limit := MaxMerge
-		for _, segment := range ii.segments.list {
-			if limit == 0 {
-				break
-			}
-			ok := segment.merging.CompareAndSwap(false, true)
-			if ok {
-				limit--
-				segments = append(segments, segment)
-			}
-		}
-	})
-	if len(segments) < MinMerge {
-		return 0, nil // nothing to merge
-	}
-
-	// Merge the selected
-	for _, segment := range segments {
-		segment.m.RLock()
-	}
-	it, err := ii.makeIterator(segments, nil, nil)
-	if err != nil {
-		return 0, fmt.Errorf("ii: merge: %w", err)
-	}
-
-	w, err := file.NewWriter(ii.basedir, ii.fstPool.Get())
-	if err != nil {
-		return 0, fmt.Errorf("ii: merge: %w", err)
-	}
-
-	removedValues := ii.removedList.Values()
-	termsCount := 0
 	for {
-		tv, err := it.Next()
+		termsGroup, err := shardingIterator.Next()
 		if errors.Is(err, go_iterators.EmptyIterator) {
 			break
-		} else if err != nil {
-			return 0, fmt.Errorf("ii: merge: %w", err)
 		}
 
-		i := 0
-		for _, v := range tv.Values {
-			_, removed := slices.BinarySearch(removedValues, v)
-			if removed {
-				continue
+		key := shardKey(termsGroup[0])
+		shard := ii.findShard(key)
+		if shard == nil {
+			// new shard
+			shard, err = ii.newShard(key)
+			if err != nil {
+				return fmt.Errorf("ii put: %w", err)
 			}
-			tv.Values[i] = v
-			i++
-		}
-		tv.Values = tv.Values[:i]
-
-		if len(tv.Values) == 0 {
-			continue
 		}
 
-		err = w.Append(tv)
+		err = shard.Put(termsGroup, val)
 		if err != nil {
-			return 0, fmt.Errorf("ii: merge: %w", err)
-		}
-		termsCount++
-	}
-	err = w.Close()
-	if err != nil {
-		return 0, fmt.Errorf("ii: merge: writer close: %w", err)
-	}
-
-	// reuse FST
-	ii.fstPool.Put(w.GetFst())
-
-	err = it.Close()
-	if err != nil {
-		return 0, fmt.Errorf("ii: merge: iterator close: %w", err)
-	}
-	ii.segments.add(w.GetKey(), termsCount)
-
-	// Remove merged segments (make them invisible for new reads)
-	ii.segments.detach(segments)
-	mergedSegmentsLen = len(segments)
-
-	// Wait until no one is reading merged segments
-	for _, segment := range segments {
-		// wait until nobody is holding the read lock, so the segment can be removed.
-		// reads are rare (merge reads are not overlapping) in a typical index usage, so that should not take long
-		for !segment.m.TryLock() {
-			runtime.Gosched()
-		}
-		err1 := file.RemoveSegment(ii.basedir, segment.key)
-		if err1 != nil {
-			err = err1 // report the last error
+			return fmt.Errorf("ii put: %w", err)
 		}
 	}
 
-	fmt.Printf("Merged %d terms in %s\n", termsCount, time.Now().Sub(start).String())
-
-	return
-}
-
-func (ii *InvertedIndex) Close() error {
 	return nil
 }
 
-// makeIterator returns merging iterator to read through all segment files
-// like from a simple sorted array.
-func (ii *InvertedIndex) makeIterator(segments []*Segment, min, max []byte) (go_iterators.Iterator[file.TermValues], error) {
-	readers := make([]go_iterators.Iterator[file.TermValues], 0, ii.segments.Len())
-	for _, segment := range segments {
-		r, err := file.NewReader(ii.basedir, segment.key, min, max)
-		if errors.Is(err, vellum.ErrIteratorDone) {
-			// here we checked that this particular segment won't have terms for us
-			// so do not include it to the selecting tree iterator.
-			continue
-		} else if err != nil {
-			return nil, fmt.Errorf("index read: %w", err)
-		}
-		readers = append(readers, r)
+func (ii *InvertedIndex) findShard(key string) *Shard {
+	ii.shardsM.RLock()
+	defer ii.shardsM.RUnlock()
+	shardIndex, ok := slices.BinarySearchFunc(ii.shards, key, func(s *Shard, key string) int {
+		return strings.Compare(s.GetKey(), key)
+	})
+	if !ok {
+		return nil
+	}
+	return ii.shards[shardIndex]
+}
+
+func (ii *InvertedIndex) newShard(key string) (*Shard, error) {
+	ii.shardsM.Lock()
+	defer ii.shardsM.Unlock()
+
+	shardBaseDir := path.Join(ii.basedir, key)
+	err := os.Mkdir(shardBaseDir, os.ModePerm)
+	if err != nil {
+		return nil, fmt.Errorf("new shard: %w", err)
 	}
 
-	it := go_iterators.NewMergingIterator(readers, file.CompareTermValues, file.MergeTermValues)
-	cit := go_iterators.NewClosingIterator[file.TermValues](it, func(err error) error {
-		//err2 := it.Close()
-		ii.segments.readRelease(segments)
-		return err
-	})
+	shard, err := NewShard(shardBaseDir, ii.fstPool, ii.removedList)
+	if err != nil {
+		return nil, fmt.Errorf("new shard: %w", err)
+	}
 
-	return cit, nil
+	shardIndex, _ := slices.BinarySearchFunc(ii.shards, key, func(s *Shard, key string) int {
+		return strings.Compare(s.GetKey(), key)
+	})
+	ii.shards = append(ii.shards, shard) // allocate once due to extending
+	copy(ii.shards[shardIndex+1:], ii.shards[shardIndex:])
+	ii.shards[shardIndex] = shard
+
+	return shard, nil
+}
+
+func (ii *InvertedIndex) Read(min, max []byte) (go_iterators.Iterator[file.TermValues], error) {
+
+	shardIterators := make([]go_iterators.Iterator[file.TermValues], 0, len(ii.shards))
+	for _, shard := range ii.shards {
+		shardIt, err := shard.Read(min, max)
+		if err != nil {
+			return nil, fmt.Errorf("index read: %w", err)
+		}
+		shardIterators = append(shardIterators, shardIt)
+	}
+
+	it := go_iterators.NewMergingIterator(shardIterators, file.CompareTermValues, file.MergeTermValues)
+
+	return it, nil
 }
 
 func NewInvertedIndex(basedir string) (*InvertedIndex, error) {
 
+	// Init a pool of FST builders so we can reuse memory for building FSTs faster.
 	mockWriter := bytes.NewBuffer(nil)
 	pool := NewPool(
 		10*time.Second,
@@ -244,35 +120,6 @@ func NewInvertedIndex(basedir string) (*InvertedIndex, error) {
 			return builder
 		},
 	)
-
-	// Init segments list (load all existing files)
-	segments := &Segments{}
-	entries, err := os.ReadDir(basedir)
-	if err != nil {
-		return nil, fmt.Errorf("load inverted index: %w", err)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		if !strings.HasSuffix(entry.Name(), "_fst") {
-			continue
-		}
-		fpath := path.Join(basedir, entry.Name())
-		key, _ := strings.CutSuffix(entry.Name(), "_fst")
-
-		v, err := vellum.Open(fpath)
-		if err != nil {
-			return nil, fmt.Errorf("load inverted index: %w", err)
-		}
-		termsCount := v.Len()
-		err = v.Close()
-		if err != nil {
-			return nil, fmt.Errorf("load inverted index: %w", err)
-		}
-
-		segments.add(key, termsCount)
-	}
 
 	// Init removed list (load from disk if exists)
 	rl := NewRemovedList(make(map[int64][]uint32))
@@ -288,10 +135,28 @@ func NewInvertedIndex(basedir string) (*InvertedIndex, error) {
 		}
 	}
 
+	// Load all shards from disk
+	shards := make([]*Shard, 0)
+	entries, err := os.ReadDir(basedir)
+	if err != nil {
+		return nil, fmt.Errorf("shards read: %w", err)
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		shardDir := path.Join(basedir, e.Name())
+		shard, err := NewShard(shardDir, pool, rl)
+		if err != nil {
+			return nil, fmt.Errorf("shard init: %w", err)
+		}
+		shards = append(shards, shard)
+	}
+
 	return &InvertedIndex{
 		basedir:     basedir,
 		fstPool:     pool,
 		removedList: rl,
-		segments:    segments,
+		shards:      shards,
 	}, nil
 }
