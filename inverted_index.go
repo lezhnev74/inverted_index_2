@@ -29,6 +29,36 @@ type ShardDescriptor struct {
 	min, max []byte
 }
 
+// Merge for each shard initiates a merging procedure.
+// Returns how many segments were merged together.
+// Thread-safe.
+// If there are fewer than reqCount segments, then skip merging,
+// otherwise merge at most mCount segments
+func (ii *InvertedIndex) Merge(reqCount, mCount int) (mergedSegmentsLen int, err error) {
+
+	// merging can be done in parallel if that is desired.
+	// here it goes sequentially.
+
+	ii.shardsM.RLock()
+	shards := append([]*Shard{}, ii.shards...)
+	ii.shardsM.RUnlock()
+
+	for _, shard := range shards {
+		t0 := time.Now()
+		shardMerged, serr := shard.Merge(reqCount, mCount)
+		if serr != nil {
+			err = serr
+			return
+		}
+		if shardMerged > 0 {
+			fmt.Printf("Shard %s merged %d in %s\n", shard.GetKey(), shardMerged, time.Now().Sub(t0).String())
+		}
+		mergedSegmentsLen += shardMerged
+	}
+
+	return
+}
+
 // Put spreads terms into shards.
 // terms must be sorted.
 func (ii *InvertedIndex) Put(terms [][]byte, val uint32) error {

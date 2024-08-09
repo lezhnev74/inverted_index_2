@@ -111,14 +111,14 @@ func (s *Shard) WriteRemovedList() error {
 // Merge selects smallest segments to merge into a bigger one.
 // Returns how many segments were merged together.
 // Thread-safe.
-// Select [MinMerge,MaxMerge] segments for merging.
-func (s *Shard) Merge(MinMerge, MaxMerge int) (mergedSegmentsLen int, err error) {
-	start := time.Now()
+// If there are fewer than reqCount segments, then skip merging,
+// otherwise merge at most mCount segments
+func (s *Shard) Merge(reqCount, mCount int) (mergedSegmentsLen int, err error) {
 
 	// Select segments for merge
-	segments := make([]*Segment, 0, MaxMerge)
+	segments := make([]*Segment, 0, mCount)
 	s.segments.safeRead(func() {
-		limit := MaxMerge
+		limit := mCount
 		for _, segment := range s.segments.list {
 			if limit == 0 {
 				break
@@ -130,14 +130,20 @@ func (s *Shard) Merge(MinMerge, MaxMerge int) (mergedSegmentsLen int, err error)
 			}
 		}
 	})
-	if len(segments) < MinMerge {
-		return 0, nil // nothing to merge
+
+	// Stop if not enough segments available
+	if len(segments) < reqCount {
+		for _, s := range segments {
+			s.merging.Store(false) // release for others
+		}
+		return 0, nil
 	}
 
 	// Merge the selected
 	for _, segment := range segments {
 		segment.m.RLock()
 	}
+
 	it, err := s.makeIterator(segments, nil, nil)
 	if err != nil {
 		return 0, fmt.Errorf("s: merge: %w", err)
@@ -216,7 +222,7 @@ func (s *Shard) Merge(MinMerge, MaxMerge int) (mergedSegmentsLen int, err error)
 		}
 	}
 
-	fmt.Printf("Merged %d terms in %s\n", termsCount, time.Now().Sub(start).String())
+	//fmt.Printf("Merged %d terms in %s\n", termsCount, time.Now().Sub(start).String())
 
 	return
 }
@@ -245,7 +251,7 @@ func (s *Shard) makeIterator(segments []*Segment, min, max []byte) (go_iterators
 	cit := go_iterators.NewClosingIterator[file.TermValues](it, func(err error) error {
 		err2 := it.Close()
 		s.segments.readRelease(segments)
-		if err != nil {
+		if err2 != nil {
 			err = err2
 		}
 		return err
@@ -257,6 +263,7 @@ func (s *Shard) makeIterator(segments []*Segment, min, max []byte) (go_iterators
 func (s *Shard) MinMax() (terms [][]byte) {
 	terms = make([][]byte, 2)
 	segments := s.segments.readLockAll()
+	defer s.segments.readRelease(segments)
 	for _, segment := range segments {
 		if terms[0] == nil {
 			terms[0] = segment.minTerm
@@ -323,16 +330,18 @@ func NewShard(basedir string, sharedPool *Pool[*vellum.Builder], sharedRemovedLi
 // the key is used to separate shard and name the basedir of the shard
 func shardKey(term []byte) string {
 	if len(term) < 2 {
-		return "00000"
+		term = []byte{byte(0x00), byte(0x00)}
 	}
 
 	// two first bytes are used for sharding,
 	// parse them as uint16 (which is up to 65536 combinations)
 	// and convert to a string (5 bytes long)
 
+	// use only first 10 bits -> 1024 combinations
 	key := uint16(term[0])
 	key = key << 8
 	key += uint16(term[1])
+	key = key >> 6
 
-	return fmt.Sprintf("%05d", key)
+	return fmt.Sprintf("%04d", key)
 }

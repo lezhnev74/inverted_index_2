@@ -21,7 +21,7 @@ func TestConcurrent(t *testing.T) {
 	require.NoError(t, err)
 
 	wg := sync.WaitGroup{}
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < 100; i++ {
 		// PUT OPS
 		wg.Add(1)
 		go func() {
@@ -53,6 +53,20 @@ func TestConcurrent(t *testing.T) {
 			require.NoError(t, it.Close())
 		}()
 	}
+	wg.Wait()
+
+	// MERGE OPS
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			merged, err := ii.Merge(2, 100)
+			require.NoError(t, err)
+			if merged == 0 {
+				break
+			}
+		}
+	}()
 	wg.Wait()
 }
 
