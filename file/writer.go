@@ -59,6 +59,7 @@ func (w *Writer) Append(tv TermValues) (err error) {
 
 func (w *Writer) Close() error {
 	err1 := w.fst.Close() // terms file is closed transitively (todo hopefully)
+	w.fst = nil
 
 	var err2 error
 	if w.valuesFile != nil { // direct mode

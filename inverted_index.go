@@ -53,7 +53,7 @@ func (ii *InvertedIndex) Merge(reqCount, mCount int) (mergedSegmentsLen int, err
 			return
 		}
 		if shardMerged > 0 {
-			fmt.Printf("Shard %s merged %d in %s\n", shard.GetKey(), shardMerged, time.Now().Sub(t0).String())
+			fmt.Printf("Shard %s merged %d segments in %s\n", shard.GetKey(), shardMerged, time.Now().Sub(t0).String())
 		}
 		mergedSegmentsLen += shardMerged
 	}
@@ -65,8 +65,13 @@ func (ii *InvertedIndex) Merge(reqCount, mCount int) (mergedSegmentsLen int, err
 // terms must be sorted.
 func (ii *InvertedIndex) Put(terms [][]byte, val uint32) error {
 
+	// todo: sort terms, so they follow shards order
+	// todo: in the shard group sort is probably also required.
+	// slices.SortFunc(terms, func(t1, t2 []byte) int { return strings.Compare(shardKey(t1), shardKey(t2)) })
+
 	termsIt := go_iterators.NewSliceIterator(terms)
 	shardingIterator := go_iterators.NewGroupingIterator(termsIt, func(t []byte) any { return shardKey(t) })
+	defer shardingIterator.Close()
 
 	for {
 		termsGroup, err := shardingIterator.Next()
@@ -140,6 +145,8 @@ func (ii *InvertedIndex) newShard(key string) (*Shard, error) {
 // with the same prefix.
 func (ii *InvertedIndex) PrefixSearch(prefixes [][]byte) (found map[string][]uint32, err error) {
 	found = make(map[string][]uint32, len(prefixes))
+	m := sync.Mutex{}
+
 	slices.SortFunc(prefixes, bytes.Compare)
 	concurrency := runtime.NumCPU()
 
@@ -220,7 +227,9 @@ func (ii *InvertedIndex) PrefixSearch(prefixes [][]byte) (found map[string][]uin
 
 				for _, prefix := range prefixes {
 					if bytes.HasPrefix(tv.Term, prefix) {
+						m.Lock()
 						found[string(prefix)] = append(found[string(prefix)], tv.Values...)
+						m.Unlock()
 					}
 				}
 			}

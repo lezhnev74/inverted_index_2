@@ -6,13 +6,43 @@ import (
 	go_iterators "github.com/lezhnev74/go-iterators"
 	"github.com/lezhnev74/inverted_index_2/file"
 	"github.com/stretchr/testify/require"
+	"log"
 	"math/rand"
 	"os"
 	"runtime"
 	"slices"
+	"strconv"
 	"sync"
 	"testing"
 )
+
+func _TestMemoryLeaks(t *testing.T) {
+	m := runtime.MemStats{}
+	pm := func() {
+		runtime.ReadMemStats(&m)
+		log.Printf("Sys: %d, Alloc:%d\n", m.Sys, m.Alloc)
+	}
+
+	d := MakeTmpDir()
+	defer os.RemoveAll(d)
+	ii, err := NewInvertedIndex(d)
+	require.NoError(t, err)
+
+	for i := 0; i < 1000; i++ {
+		terms := [][]byte{}
+		for j := 0; j < 100_000; j++ {
+			terms = append(terms, []byte(strconv.Itoa(int(rand.Int()))+"term"))
+		}
+		slices.SortFunc(terms, bytes.Compare)
+
+		err = ii.Put(terms, 100)
+		require.NoError(t, err)
+		pm()
+	}
+
+	runtime.GC()
+	pm()
+}
 
 func TestConcurrent(t *testing.T) {
 	d := MakeTmpDir()
