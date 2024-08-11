@@ -65,9 +65,8 @@ func (ii *InvertedIndex) Merge(reqCount, mCount int) (mergedSegmentsLen int, err
 // terms must be sorted.
 func (ii *InvertedIndex) Put(terms [][]byte, val uint32) error {
 
-	// todo: sort terms, so they follow shards order
-	// todo: in the shard group sort is probably also required.
-	// slices.SortFunc(terms, func(t1, t2 []byte) int { return strings.Compare(shardKey(t1), shardKey(t2)) })
+	// sort terms, so they follow shards order
+	slices.SortFunc(terms, func(t1, t2 []byte) int { return strings.Compare(shardKey(t1), shardKey(t2)) })
 
 	termsIt := go_iterators.NewSliceIterator(terms)
 	shardingIterator := go_iterators.NewGroupingIterator(termsIt, func(t []byte) any { return shardKey(t) })

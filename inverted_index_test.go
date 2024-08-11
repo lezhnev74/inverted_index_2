@@ -5,42 +5,54 @@ import (
 	"errors"
 	go_iterators "github.com/lezhnev74/go-iterators"
 	"github.com/lezhnev74/inverted_index_2/file"
+	"github.com/prometheus/procfs"
 	"github.com/stretchr/testify/require"
 	"log"
 	"math/rand"
 	"os"
 	"runtime"
+	"runtime/debug"
 	"slices"
-	"strconv"
 	"sync"
 	"testing"
+	"time"
 )
 
 func _TestMemoryLeaks(t *testing.T) {
-	m := runtime.MemStats{}
-	pm := func() {
-		runtime.ReadMemStats(&m)
-		log.Printf("Sys: %d, Alloc:%d\n", m.Sys, m.Alloc)
+	p, err := procfs.Self()
+	if err != nil {
+		log.Fatalf("could not get process: %s", err)
 	}
 
-	d := MakeTmpDir()
-	defer os.RemoveAll(d)
+	pm := func() {
+		stat, err := p.Stat()
+		if err != nil {
+			log.Fatalf("could not get process stat: %s", err)
+		}
+		log.Printf("RSS: %d\n", stat.ResidentMemory())
+	}
+	go func() {
+		for {
+			time.Sleep(time.Second)
+			//runtime.GC()
+			//debug.FreeOSMemory()
+			pm()
+		}
+	}()
+
+	d := "/home/dmitry/Code/go/src/heaplog_2024/_local/s2"
+
+	pm()
+	debug.SetGCPercent(10)
+
 	ii, err := NewInvertedIndex(d)
 	require.NoError(t, err)
 
-	for i := 0; i < 1000; i++ {
-		terms := [][]byte{}
-		for j := 0; j < 100_000; j++ {
-			terms = append(terms, []byte(strconv.Itoa(int(rand.Int()))+"term"))
-		}
-		slices.SortFunc(terms, bytes.Compare)
-
-		err = ii.Put(terms, 100)
-		require.NoError(t, err)
-		pm()
-	}
-
+	log.Printf("II loaded: %p", ii)
+	pm()
 	runtime.GC()
+	pm()
+	debug.FreeOSMemory()
 	pm()
 }
 

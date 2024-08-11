@@ -31,7 +31,10 @@ func (s *Shard) GetKey() string {
 
 // Put ingests one indexed document (all terms have the same value)
 func (s *Shard) Put(terms [][]byte, val uint32) error {
-	w, err := file.NewDirectWriter(s.basedir, s.fstPool.Get())
+	slices.SortFunc(terms, bytes.Compare)
+
+	fstBuilder := s.fstPool.Get()
+	w, err := file.NewDirectWriter(s.basedir, fstBuilder)
 	if err != nil {
 		return fmt.Errorf("s: put: %w", err)
 	}
@@ -39,9 +42,9 @@ func (s *Shard) Put(terms [][]byte, val uint32) error {
 	var minTerm, maxTerm []byte
 	for _, term := range terms {
 		if minTerm == nil {
-			minTerm = term
+			minTerm = append([]byte{}, term...)
 		}
-		maxTerm = term
+		maxTerm = append([]byte{}, term...)
 
 		err = w.Append(file.TermValues{term, []uint32{val}})
 		if err != nil {
@@ -55,7 +58,7 @@ func (s *Shard) Put(terms [][]byte, val uint32) error {
 	}
 
 	// reuse FST
-	s.fstPool.Put(w.GetFst())
+	s.fstPool.Put(fstBuilder)
 
 	// make the new segment visible
 	s.segments.add(w.GetKey(), len(terms), minTerm, maxTerm)
@@ -222,8 +225,6 @@ func (s *Shard) Merge(reqCount, mCount int) (mergedSegmentsLen int, err error) {
 		}
 	}
 
-	//fmt.Printf("Merged %d terms in %s\n", termsCount, time.Now().Sub(start).String())
-
 	return
 }
 
@@ -262,21 +263,21 @@ func (s *Shard) makeIterator(segments []*Segment, min, max []byte) (go_iterators
 
 func (s *Shard) MinMax() (terms [][]byte) {
 	terms = make([][]byte, 2)
-	segments := s.segments.readLockAll()
-	defer s.segments.readRelease(segments)
-	for _, segment := range segments {
-		if terms[0] == nil {
-			terms[0] = segment.minTerm
-		} else if bytes.Compare(terms[0], segment.minTerm) > 1 {
-			terms[0] = segment.minTerm
-		}
+	s.segments.safeRead(func() {
+		for _, segment := range s.segments.list {
+			if terms[0] == nil {
+				terms[0] = segment.minTerm
+			} else if bytes.Compare(terms[0], segment.minTerm) > 1 {
+				terms[0] = segment.minTerm
+			}
 
-		if terms[1] == nil {
-			terms[1] = segment.maxTerm
-		} else if bytes.Compare(terms[1], segment.maxTerm) < 1 {
-			terms[1] = segment.maxTerm
+			if terms[1] == nil {
+				terms[1] = segment.maxTerm
+			} else if bytes.Compare(terms[1], segment.maxTerm) < 1 {
+				terms[1] = segment.maxTerm
+			}
 		}
-	}
+	})
 	return
 }
 
