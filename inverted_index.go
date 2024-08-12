@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -36,7 +37,7 @@ type ShardDescriptor struct {
 // Thread-safe.
 // If there are fewer than reqCount segments, then skip merging,
 // otherwise merge at most mCount segments
-func (ii *InvertedIndex) Merge(reqCount, mCount int) (mergedSegmentsLen int, err error) {
+func (ii *InvertedIndex) Merge(reqCount, mCount, concurrency int) (mergedSegmentsLen int64, err error) {
 
 	// merging can be done in parallel if that is desired.
 	// here it goes sequentially.
@@ -45,18 +46,42 @@ func (ii *InvertedIndex) Merge(reqCount, mCount int) (mergedSegmentsLen int, err
 	shards := append([]*Shard{}, ii.shards...)
 	ii.shardsM.RUnlock()
 
-	for _, shard := range shards {
-		t0 := time.Now()
-		shardMerged, serr := shard.Merge(reqCount, mCount)
-		if serr != nil {
-			err = serr
-			return
+	workCh := make(chan *Shard)
+	go func() {
+		for _, shard := range shards {
+			workCh <- shard
 		}
-		if shardMerged > 0 {
-			fmt.Printf("Shard %s merged %d segments in %s\n", shard.GetKey(), shardMerged, time.Now().Sub(t0).String())
-		}
-		mergedSegmentsLen += shardMerged
+		close(workCh)
+	}()
+
+	var (
+		mergedAtomic atomic.Int64
+		wg           sync.WaitGroup
+	)
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
+		go func() {
+			defer func() {
+				wg.Done()
+			}()
+
+			for shard := range workCh {
+				t0 := time.Now()
+				shardMerged, serr := shard.Merge(reqCount, mCount)
+				if serr != nil {
+					err = serr
+					return
+				}
+				if shardMerged > 0 {
+					fmt.Printf("Shard %s merged %d segments in %s\n", shard.GetKey(), shardMerged, time.Now().Sub(t0).String())
+				}
+				mergedAtomic.Add(int64(shardMerged))
+			}
+		}()
 	}
+
+	wg.Wait()
+	mergedSegmentsLen = mergedAtomic.Load()
 
 	return
 }
@@ -237,6 +262,13 @@ func (ii *InvertedIndex) PrefixSearch(prefixes [][]byte) (found map[string][]uin
 		})
 	}
 	err = wg.Wait()
+
+	// Deduplicate
+	for k := range found {
+		slices.Sort(found[k])
+		found[k] = slices.Compact(found[k])
+	}
+
 	return
 }
 

@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"strings"
 )
 
 // Reader reads terms and their values from underlying filesystem.
@@ -77,14 +78,23 @@ func (r *Reader) Next() (TermValues, error) {
 
 	compressed := make([]uint32, runSize/4)
 
-	_, err := r.valuesMmap.ReadAt(r.valuesBuf, int64(valuesOffset))
-	if err != nil && !errors.Is(err, io.EOF) {
-		return tv, fmt.Errorf("reader: values file: mmap: %w", err)
-	}
+	// Since we do not store the size of a compressed region,
+	// we guess the amount of bytes it needs, so here if we see unexpected EOF,
+	// then we repeat with a bigger buffer.
+	for i := 3; i > 0; i-- {
+		_, err := r.valuesMmap.ReadAt(r.valuesBuf, int64(valuesOffset))
+		if err != nil && !errors.Is(err, io.EOF) {
+			return tv, fmt.Errorf("reader: values file: mmap: %w", err)
+		}
 
-	err = binary.Read(bytes.NewBuffer(r.valuesBuf), binary.LittleEndian, compressed)
-	if err != nil {
-		return tv, fmt.Errorf("reader: values file: decompress: %w", err)
+		err = binary.Read(bytes.NewBuffer(r.valuesBuf), binary.LittleEndian, compressed)
+
+		if err != nil && strings.Contains(err.Error(), "unexpected EOF") {
+			r.valuesBuf = make([]byte, len(r.valuesBuf)*2)
+			continue
+		} else if err != nil {
+			return tv, fmt.Errorf("reader: values file: decompress: %w", err)
+		}
 	}
 
 	tv.Values = intcomp.UncompressUint32(compressed, nil)
@@ -139,12 +149,18 @@ func NewReader(dir string, key string, min, max []byte) (*Reader, error) {
 		return nil, fmt.Errorf("reader: fst: %w", err)
 	}
 	firstTerm, firstOffset := fstIterator.Current()
+	if max != nil && bytes.Compare(firstTerm, max) > 0 {
+		// detect that this segment won't have any matching terms
+		return nil, vellum.ErrIteratorDone
+	}
 
 	// here we can switch to "no-values" file where all FST terms contains the same single value
 	// that is for the use-case where we ingest one segment's terms.
 	valuesFilename := path.Join(dir, key+"_val")
 	valuesFileSize := uint64(0)
+
 	valuesFile, err := os.Open(valuesFilename)
+
 	var mmapReader *mmap.ReaderAt
 	if !errors.Is(err, os.ErrNotExist) {
 		// direct mode enabled if no values file found

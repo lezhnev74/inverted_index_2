@@ -90,42 +90,49 @@ func TestIngestion(t *testing.T) {
 func TestReadPartial(t *testing.T) {
 
 	initValues := map[uint32][][]byte{
-		1: {[]byte("A")},
-		2: {[]byte("B")},
-		3: {[]byte("C")},
+		1: {[]byte("AA")},
+		2: {[]byte("BB")},
+		3: {[]byte("CC")},
 	}
 
-	d := MakeTmpDir()
-	defer os.RemoveAll(d)
+	testRun := func(shouldMerge bool) {
+		d := MakeTmpDir()
+		defer os.RemoveAll(d)
 
-	ii := makeTestShard(t, d)
+		ii := makeTestShard(t, d)
 
-	for s, terms := range initValues {
-		err := ii.Put(terms, s)
+		for s, terms := range initValues {
+			err := ii.Put(terms, s)
+			require.NoError(t, err)
+		}
+
+		if shouldMerge {
+			_, err := ii.Merge(2, 200)
+			require.NoError(t, err)
+		}
+
+		// READ BACK: MIDDLE TERMS
+		it, err := ii.Read([]byte("AA"), []byte("BB"))
 		require.NoError(t, err)
+		tvs := go_iterators.ToSlice(it)
+		require.Equal(t, []file.TermValues{
+			{[]byte("AA"), []uint32{1}},
+			{[]byte("BB"), []uint32{2}},
+		}, tvs)
+
+		// READ BACK: END TERMS
+		it, err = ii.Read([]byte("BB"), []byte("CC"))
+		require.NoError(t, err)
+		tvs = go_iterators.ToSlice(it)
+		require.Equal(t, []file.TermValues{
+			{[]byte("BB"), []uint32{2}},
+			{[]byte("CC"), []uint32{3}},
+		}, tvs)
 	}
 
-	// MERGE
-	_, err := ii.Merge(2, 200)
-	require.NoError(t, err)
-
-	// READ BACK: MIDDLE TERMS
-	it, err := ii.Read([]byte("A"), []byte("B"))
-	require.NoError(t, err)
-	tvs := go_iterators.ToSlice(it)
-	require.Equal(t, []file.TermValues{
-		{[]byte("A"), []uint32{1}},
-		{[]byte("B"), []uint32{2}},
-	}, tvs)
-
-	// READ BACK: END TERMS
-	it, err = ii.Read([]byte("B"), []byte("C"))
-	require.NoError(t, err)
-	tvs = go_iterators.ToSlice(it)
-	require.Equal(t, []file.TermValues{
-		{[]byte("B"), []uint32{2}},
-		{[]byte("C"), []uint32{3}},
-	}, tvs)
+	// Make the same partial read on merged and then on direct files
+	testRun(true)
+	testRun(false)
 }
 
 func TestMerging(t *testing.T) {
@@ -136,7 +143,7 @@ func TestMerging(t *testing.T) {
 			3: {"term3"},
 		}),
 		CountSegmentsCmd(3),
-		MergeCmd([]int{2, 2, 2}),
+		MergeCmd([]int{3, 2, 2}),
 		CountSegmentsCmd(2),
 		MergeCmd([]int{2, 2, 2}),
 		CountSegmentsCmd(1),

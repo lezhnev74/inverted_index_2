@@ -102,7 +102,7 @@ func TestConcurrent(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for {
-			merged, err := ii.Merge(2, 100)
+			merged, err := ii.Merge(2, 100, 2)
 			require.NoError(t, err)
 			if merged == 0 {
 				break
@@ -175,6 +175,7 @@ func TestSearchByPrefix(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, ii.Put([][]byte{[]byte("a12")}, 1))
+	require.NoError(t, ii.Put([][]byte{[]byte("a13")}, 1))
 	require.NoError(t, ii.Put([][]byte{[]byte("a13")}, 2))
 	require.NoError(t, ii.Put([][]byte{[]byte("a20")}, 3))
 	require.NoError(t, ii.Put([][]byte{[]byte("a30")}, 4))

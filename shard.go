@@ -118,27 +118,27 @@ func (s *Shard) WriteRemovedList() error {
 // otherwise merge at most mCount segments
 func (s *Shard) Merge(reqCount, mCount int) (mergedSegmentsLen int, err error) {
 
-	// Select segments for merge
+	// Here we skip any work if not enough segments exist
+	if s.segments.Len() < reqCount {
+		return 0, nil
+	}
+
+	// Select segments for merge (possibly concurrent call)
 	segments := make([]*Segment, 0, mCount)
 	s.segments.safeRead(func() {
-		limit := max(reqCount, mCount)
 		for _, segment := range s.segments.list {
-			if limit == 0 {
+			if len(segments) == mCount {
 				break
 			}
 			ok := segment.merging.CompareAndSwap(false, true)
 			if ok {
-				limit--
 				segments = append(segments, segment)
 			}
 		}
 	})
 
-	// Stop if not enough segments available
-	if len(segments) < reqCount {
-		for _, s := range segments {
-			s.merging.Store(false) // release for others
-		}
+	// Stop if not enough segments selected
+	if len(segments) < 2 {
 		return 0, nil
 	}
 
