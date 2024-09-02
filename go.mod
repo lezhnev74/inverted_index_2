@@ -2,12 +2,10 @@ module github.com/lezhnev74/inverted_index_2
 
 go 1.22.5
 
-replace github.com/lezhnev74/go-iterators v0.0.0-20240724045513-696ed7ea4279 => /home/dmitry/Code/go/src/go-iterators
-
 require (
 	github.com/RoaringBitmap/roaring v1.9.4
 	github.com/blevesearch/vellum v1.0.10
-	github.com/lezhnev74/go-iterators v0.0.0-20240724045513-696ed7ea4279
+	github.com/lezhnev74/go-iterators v0.0.0-20240902070734-4c1f359dc381
 	github.com/ronanh/intcomp v1.1.0
 	github.com/stretchr/testify v1.9.0
 	golang.org/x/exp v0.0.0-20240808152545-0cdaa3abc0fa
