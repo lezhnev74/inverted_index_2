@@ -19,6 +19,7 @@ import (
 )
 
 type InvertedIndex struct {
+	// Sorted by key
 	shards  []*Shard
 	shardsM sync.RWMutex
 
@@ -343,7 +344,17 @@ func NewInvertedIndex(basedir string) (*InvertedIndex, error) {
 		}
 	}
 
+	ii := &InvertedIndex{
+		basedir:     basedir,
+		fstPool:     pool,
+		removedList: rl,
+	}
+
 	// Load all shards from disk
+	// concurrent load:
+	wg := sync.WaitGroup{}
+	freeList := make(chan bool, runtime.NumCPU()) // limit concurrency
+
 	shards := make([]*Shard, 0)
 	entries, err := os.ReadDir(basedir)
 	if err != nil {
@@ -353,20 +364,33 @@ func NewInvertedIndex(basedir string) (*InvertedIndex, error) {
 		if !e.IsDir() {
 			continue
 		}
-		shardDir := path.Join(basedir, e.Name())
-		shard, err := NewShard(shardDir, pool, rl)
-		if err != nil {
-			return nil, fmt.Errorf("shard init: %w", err)
-		}
 
-		shards = append(shards, shard)
-		slices.SortFunc(shards, func(s1, s2 *Shard) int { return strings.Compare(s1.GetKey(), s2.GetKey()) })
+		freeList <- true // get a slot
+		wg.Add(1)
+		go func() {
+			defer func() {
+				<-freeList // release the slot
+				wg.Done()
+			}()
+			var shard *Shard
+			shardDir := path.Join(basedir, e.Name())
+			shard, err = NewShard(shardDir, pool, rl)
+			if err != nil {
+				err = fmt.Errorf("shard init: %w", err)
+			}
+
+			ii.shardsM.Lock()
+			shards = append(shards, shard)
+			ii.shardsM.Unlock()
+		}()
 	}
+	if err != nil {
+		return nil, fmt.Errorf("shards read: %w", err)
+	}
+	wg.Wait()
 
-	return &InvertedIndex{
-		basedir:     basedir,
-		fstPool:     pool,
-		removedList: rl,
-		shards:      shards,
-	}, nil
+	slices.SortFunc(shards, func(s1, s2 *Shard) int { return strings.Compare(s1.GetKey(), s2.GetKey()) })
+	ii.shards = shards
+
+	return ii, nil
 }
