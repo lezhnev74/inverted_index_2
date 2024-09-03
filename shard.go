@@ -267,13 +267,13 @@ func (s *Shard) MinMax() (terms [][]byte) {
 		for _, segment := range s.segments.list {
 			if terms[0] == nil {
 				terms[0] = segment.minTerm
-			} else if bytes.Compare(terms[0], segment.minTerm) > 1 {
+			} else if bytes.Compare(terms[0], segment.minTerm) > 0 {
 				terms[0] = segment.minTerm
 			}
 
 			if terms[1] == nil {
 				terms[1] = segment.maxTerm
-			} else if bytes.Compare(terms[1], segment.maxTerm) < 1 {
+			} else if bytes.Compare(terms[1], segment.maxTerm) < 0 {
 				terms[1] = segment.maxTerm
 			}
 		}

@@ -53,9 +53,12 @@ func (s *Segments) safeWrite(fn func()) {
 
 // add maintains the order by size (for merging)
 func (s *Segments) add(key string, terms int, termMin, termMax []byte) {
+	segment := &Segment{key: key, terms: terms, minTerm: termMin, maxTerm: termMax}
 	s.safeWrite(func() {
-		s.list = append(s.list, &Segment{key: key, terms: terms, minTerm: termMin, maxTerm: termMax})
-		slices.SortFunc(s.list, func(a, b *Segment) int { return cmp.Compare(a.terms, b.terms) })
+		pos, _ := slices.BinarySearchFunc(s.list, segment, func(a, b *Segment) int { return cmp.Compare(a.terms, b.terms) })
+		s.list = append(s.list, segment) // extend to fit the new element at the end
+		copy(s.list[pos+1:], s.list[pos:])
+		s.list[pos] = segment
 	})
 }
 
