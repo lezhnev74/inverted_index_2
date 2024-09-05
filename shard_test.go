@@ -275,10 +275,7 @@ func makeTestShard(t *testing.T, dir string) *Shard {
 		},
 	)
 
-	// Init removed list (load from disk if exists)
-	rl := NewRemovedList(make(map[int64][]uint32))
-
-	shard, err := NewShard(dir, pool, rl)
+	shard, err := NewShard(dir, pool)
 	require.NoError(t, err)
 
 	return shard

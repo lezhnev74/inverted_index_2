@@ -171,7 +171,7 @@ func (ii *InvertedIndex) newShard(key string) (*Shard, error) {
 		return nil, fmt.Errorf("new shard: %w", err)
 	}
 
-	shard, err := NewShard(shardBaseDir, ii.fstPool, ii.removedList)
+	shard, err := NewShard(shardBaseDir, ii.fstPool)
 	if err != nil {
 		return nil, fmt.Errorf("new shard: %w", err)
 	}
@@ -347,24 +347,9 @@ func NewInvertedIndex(basedir string) (*InvertedIndex, error) {
 		},
 	)
 
-	// Init removed list (load from disk if exists)
-	rl := NewRemovedList(make(map[int64][]uint32))
-	remListSerialized, err := os.ReadFile(path.Join(basedir, "removed.list"))
-	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("rem list: %w", err)
-		}
-	} else {
-		rl, err = UnserializeRemovedList(remListSerialized)
-		if err != nil {
-			return nil, fmt.Errorf("rem list: %w", err)
-		}
-	}
-
 	ii := &InvertedIndex{
-		basedir:     basedir,
-		fstPool:     pool,
-		removedList: rl,
+		basedir: basedir,
+		fstPool: pool,
 	}
 
 	// Load all shards from disk
@@ -391,7 +376,7 @@ func NewInvertedIndex(basedir string) (*InvertedIndex, error) {
 			}()
 			var shard *Shard
 			shardDir := path.Join(basedir, e.Name())
-			shard, err = NewShard(shardDir, pool, rl)
+			shard, err = NewShard(shardDir, pool)
 			if err != nil {
 				err = fmt.Errorf("shard init: %w", err)
 			}

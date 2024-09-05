@@ -297,7 +297,7 @@ func (s *Shard) MinMax() (terms [][]byte) {
 	return
 }
 
-func NewShard(basedir string, sharedPool *Pool[*vellum.Builder], sharedRemovedList *RemovedLists) (*Shard, error) {
+func NewShard(basedir string, sharedPool *Pool[*vellum.Builder]) (*Shard, error) {
 
 	// Init segments list (load all existing files)
 	segments := &Segments{}
@@ -336,10 +336,24 @@ func NewShard(basedir string, sharedPool *Pool[*vellum.Builder], sharedRemovedLi
 		segments.add(key, termsCount, minTerm, maxTerm)
 	}
 
+	// Init removed list (load from disk if exists)
+	rl := NewRemovedList(make(map[int64][]uint32))
+	remListSerialized, err := os.ReadFile(path.Join(basedir, "removed.list"))
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("rem list: %w", err)
+		}
+	} else {
+		rl, err = UnserializeRemovedList(remListSerialized)
+		if err != nil {
+			return nil, fmt.Errorf("rem list: %w", err)
+		}
+	}
+
 	return &Shard{
 		basedir:     basedir,
 		fstPool:     sharedPool,
-		removedList: sharedRemovedList,
+		removedList: rl,
 		segments:    segments,
 	}, nil
 }
