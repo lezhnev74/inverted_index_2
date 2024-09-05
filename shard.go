@@ -76,14 +76,18 @@ func (s *Shard) Read(min, max []byte) (go_iterators.Iterator[file.TermValues], e
 
 // Remove remembers removed values, later they are accounted during merging.
 func (s *Shard) Remove(values []uint32) (err error) {
-	t := time.Now().UnixNano()
-	s.removedList.Put(t, values)
+	if len(values) == 0 {
+		return nil
+	}
 
-	timestamps := []int64{}
+	// Cleanup old values
+	timestamps := []int64{
+		time.Now().UnixNano(),
+	}
 	key := 0
 	s.segments.safeRead(func() {
 		for _, segment := range s.segments.list {
-			key, err = strconv.Atoi(segment.key)
+			key, err = strconv.Atoi(segment.key) // key is unix ns
 			if err != nil {
 				err = fmt.Errorf("key to int conversion: %w", err)
 				break
@@ -92,6 +96,10 @@ func (s *Shard) Remove(values []uint32) (err error) {
 		}
 	})
 	s.removedList.Sync(timestamps)
+
+	// Push the new list
+	t := time.Now().UnixNano()
+	s.removedList.Put(t, values)
 
 	return s.WriteRemovedList()
 }
@@ -123,7 +131,7 @@ func (s *Shard) Merge(reqCount, mCount int) (mergedSegmentsLen int, err error) {
 		return 0, nil
 	}
 
-	// Select segments for merge (possibly concurrent call)
+	// Lock segments for merge (possibly concurrent call)
 	segments := make([]*Segment, 0, mCount)
 	s.segments.safeRead(func() {
 		for _, segment := range s.segments.list {
@@ -152,10 +160,7 @@ func (s *Shard) Merge(reqCount, mCount int) (mergedSegmentsLen int, err error) {
 		return 0, fmt.Errorf("s: merge: %w", err)
 	}
 
-	w, err := file.NewWriter(s.basedir, s.fstPool.Get())
-	if err != nil {
-		return 0, fmt.Errorf("s: merge: %w", err)
-	}
+	var w *file.Writer
 
 	removedValues := s.removedList.Values()
 	termsCount := 0
@@ -188,25 +193,36 @@ func (s *Shard) Merge(reqCount, mCount int) (mergedSegmentsLen int, err error) {
 			continue
 		}
 
+		// lazily initialize the writer only if the merged segment contains values
+		if w == nil {
+			fst := s.fstPool.Get()
+			defer s.fstPool.Put(fst)
+
+			w, err = file.NewWriter(s.basedir, fst)
+			if err != nil {
+				return 0, fmt.Errorf("s: merge: %w", err)
+			}
+		}
+
 		err = w.Append(tv)
 		if err != nil {
 			return 0, fmt.Errorf("s: merge: %w", err)
 		}
 		termsCount++
 	}
-	err = w.Close()
-	if err != nil {
-		return 0, fmt.Errorf("s: merge: writer close: %w", err)
-	}
-
-	// reuse FST
-	s.fstPool.Put(w.GetFst())
 
 	err = it.Close()
 	if err != nil {
 		return 0, fmt.Errorf("s: merge: iterator close: %w", err)
 	}
-	s.segments.add(w.GetKey(), termsCount, minTerm, maxTerm)
+
+	if w != nil {
+		err = w.Close()
+		if err != nil {
+			return 0, fmt.Errorf("s: merge: writer close: %w", err)
+		}
+		s.segments.add(w.GetKey(), termsCount, minTerm, maxTerm)
+	}
 
 	// Remove merged segments (make them invisible for new reads)
 	s.segments.detach(segments)

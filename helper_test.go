@@ -59,7 +59,7 @@ func (m *TestingMachine) RunOne(testCmd any) {
 			require.Equal(m.t, cmd[2], mergedSegments)
 		}
 	case CompareCmd:
-		expectedTermValues := make([]file.TermValues, 0, len(cmd))
+		expectedTermValues := []file.TermValues(nil)
 		for t, vs := range cmd {
 			expectedTermValues = append(expectedTermValues, file.TermValues{[]byte(t), vs})
 		}

@@ -8,7 +8,7 @@ import (
 )
 
 // RemovedLists accumulates removed values.
-// During merging of segment files it will discard removed values and possibly terms with no values.
+// During merging of segment files it will discard removed values and terms with no values.
 // Each batch of removed values is timestamped and remains in the pool
 // until all older files are merged.
 type RemovedLists struct {
@@ -53,8 +53,12 @@ func (rm *RemovedLists) Values() []uint32 {
 	return r
 }
 
-// Sync accepts current file timestamps, so it removed lists for old.
+// Sync accepts current segments(files) timestamps, and removes old lists.
 func (rm *RemovedLists) Sync(timestamps []int64) {
+	if len(timestamps) == 0 {
+		return
+	}
+
 	rm.m.Lock()
 	defer rm.m.Unlock()
 

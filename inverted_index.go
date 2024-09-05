@@ -33,6 +33,23 @@ type ShardDescriptor struct {
 	min, max []byte
 }
 
+// PutRemoved appends to remove lists of shards.
+// RemovedLists are used in merging.
+func (ii *InvertedIndex) PutRemoved(values []uint32) (err error) {
+	ii.shardsM.RLock()
+	shards := append([]*Shard{}, ii.shards...)
+	ii.shardsM.RUnlock()
+
+	wg := errgroup.Group{}
+	wg.SetLimit(runtime.NumCPU())
+	for _, shard := range shards {
+		wg.Go(func() error {
+			return shard.Remove(values)
+		})
+	}
+	return wg.Wait()
+}
+
 // Merge for each shard initiates a merging procedure.
 // Returns how many segments were merged together.
 // Thread-safe.

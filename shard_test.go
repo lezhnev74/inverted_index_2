@@ -189,6 +189,30 @@ func TestMergeWithRemoval(t *testing.T) {
 	m.Close()
 }
 
+func TestMergeEmptySegment(t *testing.T) {
+	sequence := []any{
+		// Two segments with value 1
+		IngestBulkCmd(map[uint32][]string{
+			1: {"term1"},
+		}),
+		IngestBulkCmd(map[uint32][]string{
+			1: {"term1"},
+		}),
+		// Remove value 1
+		RemoveCmd([]uint32{1}),
+		// Merge
+		MergeCmd([]int{2, 2, 2}),
+		// Expect empty segment to be removed
+		CountSegmentsCmd(0),
+		CompareCmd(map[string][]uint32{}),
+		RemoveCmd([]uint32{2}),
+	}
+
+	m := NewMachine(t)
+	m.Run(sequence)
+	m.Close()
+}
+
 func TestConcurrentAccess(t *testing.T) {
 
 	sequence := []any{

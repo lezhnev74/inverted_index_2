@@ -18,6 +18,7 @@ type Writer struct {
 	valuesFile *os.File
 	fst        *vellum.Builder
 	// key is the prefix for the filenames, used as a key for the inverted index segment
+	// from unix nanosecons
 	key string
 	// valuesOffset keeps the current offset in the values file to accept new compressed data
 	// then the offset goes to the FST

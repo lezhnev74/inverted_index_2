@@ -56,6 +56,31 @@ func _TestMemoryLeaks(t *testing.T) {
 	pm()
 }
 
+func TestPutRemove(t *testing.T) {
+	d := MakeTmpDir()
+	defer os.RemoveAll(d)
+	ii, err := NewInvertedIndex(d)
+	require.NoError(t, err)
+
+	err = ii.Put([][]byte{[]byte("aaaa"), []byte("bbbb")}, 1)
+	require.NoError(t, err)
+	err = ii.Put([][]byte{[]byte("aaaa"), []byte("bbbb")}, 1)
+	require.NoError(t, err)
+	err = ii.Put([][]byte{[]byte("aaaa")}, 2)
+	require.NoError(t, err)
+
+	err = ii.PutRemoved([]uint32{1})
+	require.NoError(t, err)
+	_, err = ii.Merge(2, 3, 2)
+	require.NoError(t, err)
+
+	it, err := ii.Read(nil, nil)
+	require.NoError(t, err)
+	tvs := go_iterators.ToSlice(it)
+
+	require.Equal(t, []file.TermValues{{[]byte("aaaa"), []uint32{2}}}, tvs)
+}
+
 func TestConcurrent(t *testing.T) {
 	d := MakeTmpDir()
 	defer os.RemoveAll(d)

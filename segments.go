@@ -14,6 +14,7 @@ type Segments struct {
 
 // Segment represents a single inverted index segment (possibly multiple files on disk)
 type Segment struct {
+	// as unix nanosecons
 	key              string
 	terms            int
 	minTerm, maxTerm []byte
@@ -85,7 +86,7 @@ func (s *Segments) detach(segments []*Segment) {
 		s.list = s.list[:x]
 
 		// shrink
-		if cap(s.list)/len(s.list) >= 2 {
+		if len(s.list) > 0 && cap(s.list)/len(s.list) >= 2 {
 			s.list = append([]*Segment{}, s.list...)
 		}
 	})
