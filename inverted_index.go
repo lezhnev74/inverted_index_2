@@ -47,6 +47,7 @@ func (ii *InvertedIndex) PutRemoved(values []uint32) (err error) {
 			return shard.Remove(values)
 		})
 	}
+
 	return wg.Wait()
 }
 
