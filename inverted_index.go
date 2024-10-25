@@ -8,6 +8,7 @@ import (
 	go_iterators "github.com/lezhnev74/go-iterators"
 	"github.com/lezhnev74/inverted_index_2/file"
 	"golang.org/x/sync/errgroup"
+	"log"
 	"os"
 	"path"
 	"runtime"
@@ -26,6 +27,8 @@ type InvertedIndex struct {
 	basedir     string
 	fstPool     *Pool[*vellum.Builder]
 	removedList *RemovedLists
+
+	enableLogging bool
 }
 
 type ShardDescriptor struct {
@@ -91,8 +94,8 @@ func (ii *InvertedIndex) Merge(reqCount, mCount, concurrency int) (mergedSegment
 					err = serr
 					return
 				}
-				if shardMerged > 0 {
-					fmt.Printf("Shard %s merged %d segments in %s\n", shard.GetKey(), shardMerged, time.Now().Sub(t0).String())
+				if shardMerged > 0 && ii.enableLogging {
+					log.Printf("Shard %s merged %d segments in %s\n", shard.GetKey(), shardMerged, time.Now().Sub(t0).String())
 				}
 				mergedAtomic.Add(int64(shardMerged))
 			}
@@ -336,7 +339,7 @@ func (ii *InvertedIndex) Read(min, max []byte) (go_iterators.Iterator[file.TermV
 	return it, nil
 }
 
-func NewInvertedIndex(basedir string) (*InvertedIndex, error) {
+func NewInvertedIndex(basedir string, enabledLogging bool) (*InvertedIndex, error) {
 
 	// Init a pool of FST builders so we can reuse memory for building FSTs faster.
 	mockWriter := bytes.NewBuffer(nil)
@@ -349,8 +352,9 @@ func NewInvertedIndex(basedir string) (*InvertedIndex, error) {
 	)
 
 	ii := &InvertedIndex{
-		basedir: basedir,
-		fstPool: pool,
+		basedir:       basedir,
+		fstPool:       pool,
+		enableLogging: enabledLogging,
 	}
 
 	// Load all shards from disk

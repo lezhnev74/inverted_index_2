@@ -45,7 +45,7 @@ func _TestMemoryLeaks(t *testing.T) {
 	pm()
 	debug.SetGCPercent(10)
 
-	ii, err := NewInvertedIndex(d)
+	ii, err := NewInvertedIndex(d, true)
 	require.NoError(t, err)
 
 	log.Printf("II loaded: %p", ii)
@@ -59,7 +59,7 @@ func _TestMemoryLeaks(t *testing.T) {
 func TestPutRemove(t *testing.T) {
 	d := MakeTmpDir()
 	defer os.RemoveAll(d)
-	ii, err := NewInvertedIndex(d)
+	ii, err := NewInvertedIndex(d, true)
 	require.NoError(t, err)
 
 	err = ii.Put([][]byte{[]byte("aaaa"), []byte("bbbb")}, 1)
@@ -84,7 +84,7 @@ func TestPutRemove(t *testing.T) {
 func TestConcurrent(t *testing.T) {
 	d := MakeTmpDir()
 	defer os.RemoveAll(d)
-	ii, err := NewInvertedIndex(d)
+	ii, err := NewInvertedIndex(d, true)
 	require.NoError(t, err)
 
 	wg := sync.WaitGroup{}
@@ -141,7 +141,7 @@ func TestPut(t *testing.T) {
 
 	d := MakeTmpDir()
 	defer os.RemoveAll(d)
-	ii, err := NewInvertedIndex(d)
+	ii, err := NewInvertedIndex(d, true)
 	require.NoError(t, err)
 
 	err = ii.Put([][]byte{[]byte("ab1"), []byte("ab2")}, 1)
@@ -174,7 +174,7 @@ func TestPut(t *testing.T) {
 	runtime.GC()
 
 	// Re-init the index to see that shards are visible
-	ii, err = NewInvertedIndex(d)
+	ii, err = NewInvertedIndex(d, true)
 	require.NoError(t, err)
 
 	it, err = ii.Read(nil, nil)
@@ -196,7 +196,7 @@ func TestPut(t *testing.T) {
 func TestSearchByPrefix(t *testing.T) {
 	d := MakeTmpDir()
 	defer os.RemoveAll(d)
-	ii, err := NewInvertedIndex(d)
+	ii, err := NewInvertedIndex(d, true)
 	require.NoError(t, err)
 
 	require.NoError(t, ii.Put([][]byte{[]byte("a12")}, 1))
@@ -223,7 +223,7 @@ func TestReadScoped(t *testing.T) {
 
 	d := MakeTmpDir()
 	defer os.RemoveAll(d)
-	ii, err := NewInvertedIndex(d)
+	ii, err := NewInvertedIndex(d, true)
 	require.NoError(t, err)
 
 	require.NoError(t, ii.Put([][]byte{[]byte("aa")}, 1))
